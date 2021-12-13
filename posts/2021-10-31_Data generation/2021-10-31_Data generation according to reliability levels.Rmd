@@ -1,0 +1,633 @@
+---
+title: "Design of the Simulation: Data Generating Models"
+author: 
+  - name: Joon-Ho Lee (jlee296@ua.edu)
+  - name: Stefanie Wind
+date: "2021-11-08"
+output:
+  html_document: 
+    css: styles.css
+    fig_caption: yes
+    highlight: haddock
+    number_sections: no
+    theme: readable
+    toc: yes
+    toc_depth: 1
+  tufte::tufte_html:
+    number_sections: yes
+    toc: true
+    toc_depth: 2
+  pdf_document:
+    toc: yes
+    toc_depth: '3'
+bibliography: bibliography.bib
+---
+
+```{r basic_setup, include=FALSE}
+### Set working directory
+setwd("~/Documents/targeted-bayesian-nonparametric-IRT/posts/2021-10-31_Data generation")
+
+### Set R Markdown options
+knitr::opts_chunk$set(echo = TRUE, warnings = FALSE, message = FALSE)
+
+# ### Set Stan options
+# options(mc.cores = parallel::detectCores())
+# rstan_options(auto_write = TRUE)
+# Sys.setenv(LOCAL_CPPFLAGS = '-march=native')
+
+### Call libraries
+library(tidyverse)
+library(kableExtra)
+library(psych)
+library(sirt)
+library(TAM)
+library(LaplacesDemon)
+library(sn)
+```
+
+
+
+# Introduction
+
+Traditional item response theory (IRT) models assume that subject-speciﬁc latent traits follow a normal distribution. This assumption is often considered for computational convenience, but there are many situations in which it may be unrealistic [@samejima1997departure]. For example, @micceri1989unicorn gives a comprehensive review of many psychometric datasets where the distribution of latent individual traits does not respect the normality assumption and presents asymmetries, heavy-tails, or multimodality instead. 
+
+We conduct a comprehensive Monte Carlo (MC) simulation study focusing on relative benefits of the two strategies to improve inferences for latent individual traits in the context of logistic IRT models for binary responses:
+
+(1) Adopting the Bayesian nonparametric approach that uses a *Dirichlet process mixture* as a nonparametric prior on the distribution of the individual latent trait, and
+
+(2) Using loss-based posterior summary methods targeted to inferential goals -- *posterior means* (PM), *constrained Bayes* (CB), and *triple-goal estimator* (GR). 
+
+
+We hypothesize that the most influential factor for all inferential goals is the (person separation) reliability of the measurements, that is, the informativeness of the test data. Hence, when designing the simulation, systematically varying the reliability factor would be essential for data generation. A large average reliability value will indicate less noisy, more informative test data. This document attempts to connect the reliability factor to what kinds of test data would have the simulation factor. 
+
+
+
+# Reliability
+
+## The basic concept
+
+Reliability (separation index) means **reproducibility of relative measure location**. It does NOT report on the **quality of the data**. So "high reliability" (of persons or items) means that there is a high probability that persons (or items) estimated with high measures actually do have higher measures than persons (or items) estimated with low measures. 
+
+If we want high reliability, we need (1) a wide sample and/or (2) low measurement error: 
+
+- If we want high **person reliability**, we need (1) a person sample with a large ability range and/or (2) an instrument with many items (or long rating scales). 
+
+- If we want high **item reliability**, we need (1) a test with a large item difficulty range and/or (2) a large sample of persons. Usually low item reliability is because the person sample size is too small to establish a reproducible item difficulty hierarchy.
+
+
+## Implications
+
+Person and item reliability have different applications and implications.
+ 
+Person reliability is used to *classify people*. Low person reliability (usually < 0.8) with a relevant person sample implies that the instrument may not be not sensitive enough to distinguish between high and low performers. More items may be needed.
+ 
+Item reliability is used to *verify the item hierarchy*. Low item reliability (usually < 0.9) implies that the person sample is not large enough to confirm the item difficulty hierarchy (= construct validity) of the instrument.
+
+In our study, we will focus on the person reliability. 
+
+
+
+# Elements in the computation of reliability
+
+@guilford1965reliability says
+
+> The reliability of any set of measurements is logically defined as the proportion of their variance that is true variance. We think of the total variance of a set of measures as being made up of two sources of variance: *true variance* and *error variance*. The true measure is assumed to be the genuine value of whatever is being measured. The error components occur independently and at random.
+
+In Rasch terms, true variance is the *adjusted* variance (observed variance adjusted for measurement error). Error Variance is a mean-square error (derived from the model) inflated by misfit to the model encountered in the data.
+
+@guilford1965reliability also note a crucial point:
+
+> Reliability depends upon the *population measured* as well as the *measuring instrument*. One should speak of the reliability of a certain instrument applied to a certain population under certain conditions (p. 439).
+
+This is because the true variance is a characteristic of the sample tested and the error variance is a characteristic of the measuring instrument.
+
+
+
+## Simulation condition #1. Varying the separation coefficient
+
+To simulate binary responses according to the level of the person reliability, we first fix the characteristic of the sample tested with unit true variances (and SD):
+
+```{r}
+# True variance and SD
+true_var <- c(1, 1, 1, 1, 1)
+true_SD <- sqrt(true_var)
+```
+
+Since the person reliability ($R$) is restricted to the range 0 to 1, it is commmon to express it as a separation coefficient ($G$) with range 0 to infinity:
+
+$$
+G = \sqrt{\frac{R}{1-R}} = \frac{\text{true SD}}{\text{error SD}}
+$$
+
+The separation coefficient $G$ is the number of statistically different performance strata that the test can identify in the sample. This can be pictured by placing an error distribution in each stratum. A separation of 2 ($G = 2$) implies that only two levels of performance can be consistently identified by the test for samples like the one tested. 
+
+So, the first option to control the $R$ level in our simulation design is to vary the $G$ level: a ratio scale index comparing the *true* spread of the measures with their measurement error: 
+
+```{r}
+# Signal-to-noise ratio
+# = Separation coefficient
+# = true SD / error SD (RMSE)
+sep_coef <- c(1, 2, 3, 4, 5)
+```
+
+Each chosen value of the separation coefficient ($G = 1, 2,..., 5$) indicates the measure of spread of this sample of examinees (or test items) in units of the test error in their measures.
+
+Error SD and observed SD are then calculated directly from the given true SD and separation coefficient:
+
+```{r}
+# Error variance and RMSE
+err_SD <- true_SD/sep_coef    
+err_var <- err_SD^2
+
+# Observed variance = true variance + error variance
+obs_var <- true_var + err_var
+```
+
+In particular, the error SD is also called as a *root mean-squared error* (RMSE) or a *standard error of measurement* (SEM), which indicates an *average* measurement error of reported measures.  
+
+Next, the reliability formulas follow @adams2005reliability. Let $v$ denote the observed variance of ability ($\theta$) estimates and let $s$ denote the average of the squared error (MSE). Then, the WLE reliability is defined as $1 - \frac{s}{v} = \frac{v-s}{v}$ while the EAP reliability is defined as $1 - \frac{s}{s + v} = \frac{v}{s+v}$:
+
+```{r}
+# (Person separation) reliability = true variance / observed variance
+# EAP reliability is larger than WLE reliability
+WLE_rel <- true_var/obs_var  # or, 1 - (err_var/obs_var)
+EAP_rel <- 1 - (err_var/(obs_var + err_var))
+```
+
+
+As a reference, we also calculate the discernable strata: $(4G + 1)/3$. The functional range of measures is around 4 true SD. We inflate this by 1 RMSE to allow for the error in the observed measures. Then we set a significant difference between two measures at 3 RMSE. Then there are (4 true SD + RMSE)/(3 RMSE) = $(4G + 1)/3$
+significantly different levels of measures in the functional range. See discussion at [Reliability, Separation, Strata Statistics](https://www.rasch.org/rmt/rmt63i.htm). 
+
+
+```{r}
+# Strata = (4*sep_coef + 1)/3
+strata <- (4*sep_coef + 1)/3
+```
+
+
+The table below aids interpreting and predicting reliabilities with the underlying components defined above:
+
+```{r}
+# Combine as a tibble
+tab_cond <- tibble(
+  true_SD, true_var, err_SD, err_var, obs_var, 
+  sep_coef, strata, WLE_rel, EAP_rel
+)
+
+round(tab_cond, 2) %>%
+  kbl(caption = "Simulation conditions #01") %>%
+  kable_minimal(full_width = F, html_font = "Cambria")
+```
+
+
+
+## Simulation condition #2. Varying the WLE reliability
+
+Let's set up an alternative conditions with the equally-spaced intervals for the WLE reliability (`WLE_rel`) rather than the separation coefficient $G$ (`sep_coef`). 
+
+
+
+
+```{r}
+# Target WLE reliabilities and fixed true variances
+WLE_rel <- c(0.5, 0.6, 0.7, 0.8, 0.9)
+true_var <- c(1, 1, 1, 1, 1)
+
+# Define a function to generate a table with simulation conditions
+gen_sim_conds <- function(true_var, WLE_rel){
+  
+  # True SD
+  true_SD <- sqrt(true_var)
+
+  # Observed variance = true variance + error variance
+  obs_var <- true_var/WLE_rel
+  
+  # Error variance and RMSE
+  err_var <- obs_var - true_var
+  err_SD <- sqrt(err_var)
+  
+  # Signal-to-noise ratio = Separation coefficient = true SD / error SD (RMSE)
+  sep_coef <- true_SD/err_SD
+  
+  # Strata = (4*sep_coef + 1)/3
+  strata <- (4*sep_coef + 1)/3
+  
+  # EAP reliability
+  EAP_rel <- 1 - (err_var/(obs_var + err_var))
+  
+  # Combine as a tibble
+  tab_cond <- tibble(
+    true_SD, true_var, err_SD, err_var, obs_var, 
+    sep_coef, strata, WLE_rel, EAP_rel
+  )
+  
+  return(tab_cond)
+}
+
+# New simulation conditions
+df_simconds <- gen_sim_conds(true_var, WLE_rel)
+round(df_simconds, 2) %>%
+  kbl(caption = "Simulation conditions #02") %>%
+  kable_minimal(full_width = F, html_font = "Cambria")
+```
+
+
+
+# Generating $\theta$'s - true latent trait distributions
+
+Here we define a function to generate a latent trait (person ability) distribution with zero mean and unit variance.
+
+1.  Gaussian
+
+2.  Student T distribution with df = `nu`
+
+3.  Skewed normal distribution with marginal mean and variance of SkewN(0, 1\^2)
+
+4.  Asymmetric Laplace distribution with skewness parameter `p`
+
+5.  A mixture of two Gaussian distributions
+
+    -   `delta`: distance between two means
+    -   `eps`: proportion of the small component
+    -   `ups`: ratio between two variances
+
+Bimodal: delta = 4; eps = 0.3; ups = 1
+
+Mixed: delta = 5; eps = 0.3; ups = 2
+
+
+```{r}
+gen_true_theta <- function(N = 50, true_dist = NULL, 
+                           tau = 0, var = 1, 
+                           nu = NULL, slant = NULL, rho = NULL, 
+                           delta = NULL, eps = NULL, ups = NULL){
+  
+  # Set mean, variance, and SD 
+  # zero mean and unit variance for all Gs   
+  sigma <- sqrt(var)
+  
+  # Generate true person ability distribution theta
+  
+  if (true_dist == "Gaussian"){ 
+    
+    theta <- rnorm(N, mean = tau, sd = sigma)
+    
+  } else if (true_dist == "T" & !is.null(nu)){   
+    
+    theta <- rt(N, nu)*sqrt((nu - 2)/nu)
+    
+  } else if (true_dist == "Skew" & !is.null(slant)){
+    
+    # Generate location and scale parameters of skewed normal
+    # to achieve E(theta) = 0 and Var(theta) = 1
+    delta <- slant/sqrt(1 + slant^2)
+    scale <- sqrt(var/(1-(2*delta^2/pi)))
+    location <- tau - scale*sqrt(2/pi)*delta
+    
+    theta <- sn::rsn(n = N, xi = location, omega = scale, 
+                     alpha = slant)[1:N]
+    
+  } else if (true_dist == "ALD" & !is.null(rho)){
+    
+    # Generate location, scale, and skewness parameters 
+    # of ALD distribution to achieve E(theta) = 0 and Var(theta) = 1
+    scale <- sqrt((2*rho^2*var)/(1 + rho^4))
+    location <- tau - ((scale*(1/rho - rho))/sqrt(2))
+    theta <- LaplacesDemon::ralaplace(N, location, scale, rho)
+
+  } else if (true_dist == "Mixture" & !(is.null(delta)|is.null(eps)|is.null(ups))){
+    
+    # Define a normalizing factor `a`
+    a <- sqrt((1 - eps) + eps*ups^2 + eps*(1 - eps)*delta^2)
+    
+    # Simulate a mixture of two normals with mean 0 and variance 1  
+    ind <- runif(N) < (1 - eps)
+    theta <- ind*rnorm(N, -eps*delta/a, sqrt(1/a^2)) + 
+      (1 - ind)*rnorm(N, (1 - eps)*delta/a, sqrt(ups^2/a^2))
+  }
+  return(theta)
+}
+```
+
+
+```{r}
+# Simulate theta's according to the defined DGMs
+N <- 10000
+
+Gaussian <- gen_true_theta(N = N, true_dist = "Gaussian", tau = 0, var = 1)
+
+T <- gen_true_theta(N = N, true_dist = "T", tau = 0, var = 1, nu = 5)
+
+Skew <- gen_true_theta(N = N, true_dist = "Skew", tau = 0, var = 1, slant = 5)
+
+ALD <-gen_true_theta(N = N, true_dist = "ALD", tau = 0, var = 1, rho = 0.1)
+
+Bimodal <- gen_true_theta(N = N, true_dist = "Mixture", tau = 0, var = 1,
+                          delta = 4, eps = 0.3, ups = 1)
+
+Mixed <- gen_true_theta(N = N, true_dist = "Mixture", tau = 0, var = 1,
+                        delta = 5, eps = 0.3, ups = 2)
+
+# Collect the simulated data
+vec_levels <- c("Gaussian", "T", "Skew", "ALD", "Bimodal", "Mixed")
+
+df_theta <- tibble(Gaussian, T, Skew, ALD, Bimodal, Mixed) %>%
+  pivot_longer(Gaussian:Mixed, names_to = "DGM", values_to = "value") %>%
+  mutate(DGM = factor(DGM, levels = vec_levels)) %>%
+  arrange(DGM)
+```
+
+
+```{r, fig.width=10, fig.height=5, warning=FALSE}
+ggplot(data = df_theta, aes(x = value)) + 
+  geom_density() + 
+  geom_vline(xintercept = 0, color = "red", linetype = "dashed") + 
+  facet_wrap(DGM ~ .) + 
+  xlim(-6, 6) + 
+  theme_bw() + 
+  labs(title = "Data-generating models for true person ability distributions", 
+       subtitle = "with mean 0 and variance 1", 
+       x = NULL, y = "Density", 
+       caption = "Range truncated at [-6, 6]")
+```
+
+
+# Generating a vector of SEM
+
+Let's first simulate the true latent traits ($\theta$s) from a Gaussian distribution ($N = 50$). 
+
+```{r}
+# Generate true theta's from a Gaussian distribution
+N <- 50
+true_theta <- gen_true_theta(N = N, true_dist = "Gaussian", tau = 0, var = 1)
+
+tibble(true_theta) %>%
+  round(2) %>%
+  arrange(true_theta) %>%
+  pull(true_theta)
+```
+
+
+
+## (1) A simple hierarchical approach: assuming the same SEMs across the $\theta$ range
+
+The basic Rubin's hierarchical model.
+
+Based on the CTT framework. 
+
+```{r}
+# (1) A simple hierarchical approach 
+# assuming equal SEM across theta range
+
+# Extract SEMs from the pre-defined simulation conditions
+err_SD <- df_simconds %>% pull(err_SD)
+
+# Extract the first SEM and generate a vector with a length of N
+vec_err_SD1 <- rep(err_SD[1], N)
+
+# Level-1 sampling model
+obs_theta <- rnorm(n = N, mean = true_theta, sd = vec_err_SD1)
+
+# Present the resulting true theta, observed theta, and SEM table
+tibble(true_theta, obs_theta, vec_err_SD1) %>%
+  set_names("true", "observed", "SEM") %>%
+  arrange(true) %>%
+  print(n = 50)
+```
+
+
+Generate the target number of items (test lengths) based on the Spearman-Brown prediction formula (prophecy formula) for person test reliability.
+
+How many items are required to produce the WLE reliability I want with the sample of persons and the same type of items?
+
+- $\text{T}$: target number of items 
+- $\text{C}$: current number of items
+- $\text{R}_{\text{T}}$: target person (WLE) reliability
+- $\text{R}_{\text{C}}$: current person (WLE) reliability
+
+$$
+\text{T} = \text{C} \cdot \frac{\text{R}_{\text{T}} \cdot (1 - \text{R}_{\text{C}})}{(1 - \text{R}_{\text{T}}) \cdot \text{R}_{\text{C}}}
+$$
+
+Example: the current test length is C = 20 items, and the current person reliability is RC = 0.88 (See [Dr. Linacre's approximation](https://raschforum.boards.net/thread/3574/person-reliability-question)). 
+
+We want a person reliability of $\text{R}_{\text{T}} = 0.5$
+
+
+Target number of items is T = 10 * 0.8 * (1-0.3) / ( (1-0.8)* 0.3) = 94 items.
+
+
+```{r}
+# Define a function to calculate the target number of items 
+prophecy_target_N_item <- function(C = 20, R_C = 0.88, R_T = 0.50){
+  
+  T <- C*(R_T*(1 - R_C))/((1 - R_T)*R_C)
+  return(T)
+
+  }
+
+# Calculate the target number of items with Dr. Linacre's approximation 
+# and some variations
+prophecy_target_N_item(C = 20, R_C = 0.88, R_T = 0.50)
+prophecy_target_N_item(C = 20, R_C = 0.80, R_T = 0.50)
+prophecy_target_N_item(C = 20, R_C = 0.70, R_T = 0.50)
+prophecy_target_N_item(C = 20, R_C = 0.60, R_T = 0.50)
+prophecy_target_N_item(C = 20, R_C = 0.50, R_T = 0.50)
+```
+
+These solutions seem too extreme. 
+
+Let's first work with a typical 20 item dichotomous test. 
+
+We first define a function to generate binary responses based on the Rasch model:
+
+```{r}
+# Define a function to generate binary responses
+gen_rasch_prob_y <- function(N_person, N_item, theta, beta){
+  
+  # Create two empty matrices saving probabilities and responses 
+  y_mat <- prob_mat <- matrix(0, nrow = N_person, ncol = N_item) 
+  
+  # Generate responses based on Rasch model
+  for(i in 1:N_person) { 
+    for(j in 1:N_item) { 
+      eta <- theta[i] - beta[j] 
+      prob <- exp(eta)/(1 + exp(eta))
+      prob_mat[i, j] <- prob
+      y_mat[i,j] <- rbinom(1, 1, prob) 
+    } 
+  }
+  
+  # Return two matrices as a list
+  dimnames(y_mat) <- dimnames(prob_mat) <- 
+    list(
+      paste0("id_", str_pad(seq(1:N_person), 2, pad = "0")), 
+      paste0("item_", str_pad(seq(1:N_item), 2, pad = "0"))
+    )
+  list(prob_mat, y_mat)
+}
+```
+
+
+Next, we simulate binary responses from $N = 50$ individuals on $I = 20$ binary items. Values for item difficulty parameters are taken to be equally spaced in $(-3, 3)$. We then exploit the *observed* person ability estimates $\hat{\theta}$'s to generate responses.  
+
+
+```{r}
+# Example simulation
+N <- 50
+I <- 20
+
+theta <- obs_theta
+beta <- c(0, seq(-3, 3, length = I - 1))
+
+list_prob_y <- gen_rasch_prob_y(N, I, theta, beta)
+```
+
+
+Let's fit a simple Rasch model to validate the simulation:
+
+
+```{r}
+# Fit a simple Rasch model (MML estimation) 
+mod <- TAM::tam.mml(resp = list_prob_y[[2]]) 
+
+# Extract item parameters 
+mod$item  # item difficulties
+
+# WLE estimation
+wle <- TAM::tam.wle(mod)
+
+# Standard errors
+se <- TAM::tam.se(mod)
+se$xsi
+
+# EAP, WLE reliabilities
+mod$EAP.rel
+wle$WLE.rel %>% unique()
+```
+
+
+WLE and EAP reliabilities are estimated to be 0.84 or above, which were not our intended value (0.50). But why? This method doesn't seem to work. 
+
+
+
+## (2) Using the test information function: assuming different SEMs across the $\theta$ range
+
+### Test information function $I(\theta)$
+
+test information = test variance
+
+test variance = the sum of item variances
+
+$$
+\begin{align}
+\text{SEM}(\theta)
+        &= \frac{1}{\sqrt{I(\theta)}} \\
+I(\theta) &= \frac{1}{\text{SEM}(\theta)^2} \\
+        &= \sum_{i} I_i(\theta) \\
+\end{align}
+$$
+
+```{r}
+# Calculating the test information functions
+err_SD <- df_simconds %>% 
+  pull(err_SD)
+
+(SEM <- err_SD)  # standard error of measurement
+
+(test_info <- 1/(SEM^2))  # test information function
+```
+
+
+
+### Test variance: the variance of the ability estimates
+
+Then, we can model the variance of the ability estimate along a grid of $\theta$ values. 
+
+$$
+I(\theta) = \sum_{i} I_{i}(\theta, \beta_i)
+$$
+
+
+### Item variances
+
+What we have: N, I, theta, 
+
+Obtain a vector of SEMs (item variances) given the values above. 
+
+$$
+I_{i}(\theta, \beta_i) = \text{P}_i(\theta, \beta_i) \cdot (1-\text{P}_i(\theta, \beta_i))
+$$
+
+Example analysis.
+
+```{r}
+# Target test information level = 9
+test_info[4]
+
+# Set the number of items
+# Sum of the 20 item information values = 9
+# on average, 9/20 = 0.45
+I <- 25
+beta <- c(0, seq(-3, 3, length = I - 1))
+
+# Calculate the probabilities of correct answer
+list_prob_y <- gen_rasch_prob_y(N, I, true_theta, beta)
+prob_mat <- list_prob_y[[1]]
+
+# Marginalize out person dimension
+prob_item <- apply(prob_mat, 2, mean)
+
+# Get a item information vector
+item_info <- prob_item * (1- prob_item)
+sum(item_info)
+```
+
+`N_item` solution is 55. 
+
+We need to find a function to generate an item difficulty vector in ways that sum up to the pre-defined test information function. 
+
+Proceed with a grid serach method. 
+
+
+
+```{r}
+# Fit a simple Rasch model (MML estimation) 
+mod <- TAM::tam.mml(resp = list_prob_y[[2]]) 
+
+# Extract item parameters 
+mod$item  # item difficulties
+
+# WLE estimation
+wle <- TAM::tam.wle(mod)
+
+# Standard errors
+se <- TAM::tam.se(mod)
+se$xsi
+
+# EAP, WLE reliabilities
+mod$EAP.rel
+wle$WLE.rel %>% unique()
+```
+
+
+
+
+
+
+# Consistent with prophecy formula?
+
+
+# References
+
+
+
+
+
+
+
+
+
+
+
+
