@@ -12,7 +12,8 @@
 ###' Data: Simulated data
 ###' 
 ###' Date: 
-###' - 2021-12-12
+###' - 2021-12-12: created
+###' - 2022-01-23: finalized
 ###' 
 ###' Author: JoonHo Lee (`jlee296@ua.edu`)
 ###' 
@@ -86,8 +87,7 @@ round(df_simconds, 2) %>%
 
 ###'#######################################################################'
 ###'
-###'  Generate a tibble crossing all `varying but fixed`
-###'  
+###'  Generate a tibble crossing all `varying but fixed` 
 ###'  person- and reliability-related simulation factors 
 ###' 
 ###' - Number of persons (test takers)
@@ -163,15 +163,15 @@ df_theta_conds3 <- df_theta_conds2 %>%
 vec_I <- c(1:70)
 
 df_theta_I <- df_theta_conds3 %>%
-  mutate(I = rep(list(vec_I), nrow(df_theta_conds3))) %>%
+  mutate(I = rep(list(vec_I), nrow(.))) %>%
   unnest(I)
 
 
-### Work only with the first simulation condition
-df_theta_I_sub <- df_theta_I %>%
-  filter(sim_cond <= 5)
-
-df_theta_I_sub  # Only 35,000 cases
+# ### Work only with the first simulation condition
+# df_theta_I_sub <- df_theta_I %>%
+#   filter(sim_cond <= 5)
+# 
+# df_theta_I_sub  # Only 35,000 cases
 
 
 
