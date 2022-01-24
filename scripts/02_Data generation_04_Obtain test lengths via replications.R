@@ -29,16 +29,24 @@
 gc(); rm(list=ls())
 
 
-### Set working directory and data directory 
+### Set working directory and data directory (Mac) 
 work_dir <- c("~/Documents/targeted-bayesian-nonparametric-IRT")
 data_dir <- file.path(work_dir, "datasets")
 data_dir2 <- c("~/Documents/Data-files/targeted-bayesian-nonparametric-IRT-large-files")
 setwd(work_dir)
 
 
+### Set working directory and data directory (Windows)
+work_dir <- c("~/targeted-bayesian-nonparametric-IRT")
+data_dir <- file.path(work_dir, "datasets")
+data_dir2 <- c("D:/Data-files/targeted-bayesian-nonparametric-IRT-large-files")
+setwd(work_dir)
+
+
 ### Call libraries
 library(tidyverse)
 library(kableExtra)
+
 library(psych)
 library(sirt)
 library(TAM)
@@ -97,9 +105,16 @@ round(df_simconds, 2) %>%
 ###' 
 ###'
 
-###' Define vectors of the varying but fixed simulation factors
-vec_N_persons <- c(20, 50, 100, 200, 1000)
+###' [Full version] Define vectors of the varying but fixed simulation factors
+vec_N_persons <- c(20, 50, 100, 200, 500)
 vec_DGMs <- c("Gaussian", "T", "Skew", "ALD", "Bimodal", "Mixed")
+vec_WLE_rel <- c(0.5, 0.6, 0.7, 0.8, 0.9)
+vec_true_var <- c(1, 1, 1, 1, 1)
+
+
+###' [Reduced version] Define vectors of the varying but fixed simulation factors
+vec_N_persons <- c(20, 50, 100, 200, 500)
+vec_DGMs <- c("Gaussian", "ALD", "Mixed")
 vec_WLE_rel <- c(0.5, 0.6, 0.7, 0.8, 0.9)
 vec_true_var <- c(1, 1, 1, 1, 1)
 
@@ -155,8 +170,8 @@ df_theta_conds3 <- df_theta_conds2 %>%
 ###'
 ###' Add a vector for the test length (I, number of items) candidates
 ###'
-###' -> result in 150 conditions by 100 replications by 70 test length choices
-###'    = 1,050,000 rows 
+###' -> result in 75 conditions by 100 replications by 70 test length choices
+###'    = 525,000 rows 
 ###'
 ###'
 
@@ -173,22 +188,37 @@ df_theta_I <- df_theta_conds3 %>%
 # 
 # df_theta_I_sub  # Only 35,000 cases
 
+df_theta_I_sub <- df_theta_I
+
 
 
 ###'#######################################################################'
 ###'
 ###' Simulate item difficulty (\beta) vectors
-###' 
-###' with the fixed true_theta vector and varying number of items (I)
 ###'
 ###'
 
+### Prepare parallel computation: Set the number of workers
+parallelly::availableCores()
+parallelly::availableWorkers()
+plan(multisession, workers = 20)
+
+
+### Let's roll!
 tic()
 
-df_theta_I_sub <- df_theta_I_sub %>%
+df_theta_I_beta <- df_theta_I_sub %>%
+  # slice(1:10) %>% # slices for testing
   mutate(
-    beta = map2(.x = I, .y = true_theta, 
-                .f = ~gen_vec_beta(.x, .y))
+    
+    ###' STEP 1. Simulate item difficulty (\beta) vectors
+    beta = future_map2(.x = I, 
+                       .y = true_theta, 
+                       .f = ~gen_vec_beta(.x, .y), 
+                       .options = furrr_options(seed = NULL, 
+                                                chunk_size = NULL, 
+                                                scheduling = 10), 
+                       .progress = TRUE)
   ) %>%
   unnest(beta)
 
@@ -196,11 +226,11 @@ toc()
 
 
 ### Check the result
-df_theta_I_sub
+df_theta_I_beta
 
-df_theta_I_sub$beta_kind
+df_theta_I_beta$beta_kind
 
-df_theta_I_sub$vec_beta[[100]]
+df_theta_I_beta$vec_beta[[100]]
 
 
 
