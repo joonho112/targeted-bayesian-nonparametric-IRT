@@ -315,6 +315,28 @@ gen_rasch_logit_prob_y <- function(N_person, N_item, theta, beta){
 
 
 
+###'#######################################################################
+###'
+###' `get_test_info_est()`
+###' 
+###'  - Calculate test information from the logit matrix
+###'
+###'
+
+get_test_info_est <- function(logit_mat){
+  
+  # Item information vector
+  logit_item <- apply(logit_mat, 2, mean)
+  
+  # Test information scalar (estimated)
+  prob_item <- exp(logit_item)/(1 + exp(logit_item))
+  item_info <- prob_item * (1 - prob_item)
+  test_info_est <- sum(item_info)
+  return(test_info_est)
+}
+
+
+
 ###'#######################################################################'
 ###'
 ###' `prophecy_target_N_item()`
