@@ -58,9 +58,6 @@ library(furrr)
 library(progressr)
 library(tictoc)
 
-library(foreach)
-library(parallel)
-
 
 ### Call custom functions
 list.files(file.path(work_dir, "functions"), full.names = TRUE) %>% 
@@ -400,13 +397,13 @@ df_nest[1:10,] %>%
 ## Prepare parallel computing
 parallelly::availableCores()
 parallelly::availableWorkers()
-plan(multisession, workers = 10)
+plan(multisession, workers = 20)
 
 
 ### Let's roll!
 tic()
 
-df_nest[1:10,] %>%
+df_nest %>%
   future_pmap(.f = process_df_nest, 
               .options = furrr_options(seed = NULL,
                                        chunk_size = NULL,
@@ -416,45 +413,193 @@ df_nest[1:10,] %>%
 toc()
 
 
-# ###'#######################################################################'
-# ###'
-# ###' Filter out the best results based on WLE estimates (biases)
-# ###'
-# ###'
-# 
-# ### Filter out cases with minimum biase WLE reliability
-# df_solution <- df_theta_I_sub3 %>%
-#   group_by(sim_cond, rep, beta_kind) %>%
-#   filter(abs(bias_WLE_rel) == min(abs(bias_WLE_rel), na.rm = TRUE))
-# 
-# 
-# ### Select variables to present
-# vec_vars <- c("sim_cond", "rep",
-#               "beta_kind", "DGM", "N_person", "I", 
-#               "test_info", "test_info_est", 
-#               "WLE_rel", "WLE_rel_est", 
-#               "EAP_rel", "EAP_rel_est", 
-#               "bias_test_info", "bias_WLE_rel", "bias_EAP_rel")
-# 
-# df_solution2 <- df_solution %>%
-#   select(all_of(vec_vars))
-# 
-# 
-# ### Average over 100 replications
-# df_solution3 <- df_solution2 %>%
-#   group_by(sim_cond, beta_kind, DGM, N_person, 
-#            test_info, WLE_rel, EAP_rel) %>%
-#   summarize(mean_I = mean(I, na.rm = TRUE), 
-#             
-#             mean_WLE_rel_est = mean(WLE_rel_est, na.rm = TRUE), 
-#             mean_EAP_rel_est = mean(EAP_rel_est, na.rm = TRUE), 
-#             mean_test_info_est = mean(test_info_est, na.rm = TRUE),
-#             
-#             mean_bias_WLE_rel = mean(bias_WLE_rel, na.rm = TRUE), 
-#             mean_bias_EAP_rel = mean(bias_EAP_rel, na.rm = TRUE), 
-#             mean_bias_test_info = mean(bias_test_info, na.rm = TRUE))
-#             
-# 
-# ### Save the results
-# setwd(work_dir)
-# write_csv(df_solution3, file = "tables/test length solutions.csv")
+
+###'#######################################################################
+###'
+###' Preliminary analysis to collect beta solutions
+###' from the resulting data frame
+###'
+###'
+
+###' Data containing working directory
+###' 7500 files
+###' Total 142GB
+data_dir3 <- file.path(data_dir2, 
+                       "processed_df_nest")
+
+
+### Investigate the resulting data frame example
+temp_path <- file.path(data_dir3,
+                       "01_Gaussian_N_020_WLErel_50_rep_001.rds")
+
+df_temp <- read_rds(temp_path)
+
+
+### Extract only scalars
+df_scalar <- df_temp %>%
+  select(N_item, beta_kind, 
+         ends_with("_est"), ends_with("_bias"), 
+         error_lgl)
+
+
+###' Extract only the cases with the least WLE reliability biases
+###' group_by beta_kind, drop all error cases
+df_min <- df_temp %>%
+  filter(error_lgl == FALSE) %>%
+  group_by(beta_kind) %>%
+  mutate(
+    min_WLE_bias = min(abs(WLE_rel_bias))
+  ) %>%
+  ungroup() %>%
+  filter(min_WLE_bias == abs(WLE_rel_bias))
+
+df_min
+
+
+### Mutate file location with the condition name
+df_nest <- df_nest %>%
+  mutate(
+    rds_path = file.path(data_dir3, 
+                         paste0(cond_name, ".rds"))
+  ) %>%
+  relocate(rds_path, .after = cond_name)
+
+
+
+###'#######################################################################
+###'
+###' `extract_I_solutions()`
+###' 
+###' Extract minimum WLE reliability bias solution
+###'
+###'
+
+extract_I_solutions <- function(rds_path){
+  
+  # Import the .rds file
+  df_temp <- read_rds(rds_path)
+  
+  #' Extract only the cases with the least WLE reliability biases
+  #' group_by beta_kind, drop all error cases
+  df_min <- df_temp %>%
+    filter(error_lgl == FALSE) %>%
+    group_by(beta_kind) %>%
+    mutate(
+      min_WLE_bias = min(abs(WLE_rel_bias))
+    ) %>%
+    ungroup() %>%
+    filter(min_WLE_bias == abs(WLE_rel_bias))
+  
+  # Delete unnecessary columns & return results
+  df_min %>%
+    select(-N_person)
+}
+
+
+###' Apply the function across the 7500 rows
+parallelly::availableCores()
+parallelly::availableWorkers()
+plan(multisession, workers = 20)
+
+tic()
+
+df_nest_min <- df_nest %>%
+  ungroup() %>%
+  select(-data) %>%
+  # slice(1:100) %>%  # slice for testing
+  mutate(
+    df_min = 
+      future_map(
+        .x = .$rds_path, 
+        .f = extract_I_solutions, 
+        .options = furrr_options(seed = NULL,
+                                 chunk_size = NULL,
+                                 scheduling = 10),
+        .progress = TRUE
+      )
+  ) %>%
+  select(-rds_path)
+  
+toc()
+
+
+
+###'#######################################################################
+###'
+###' Tidy up the resulting `df_nest_min` and save as a .rds file
+###'
+###'
+
+### Check file size: 3.2 GB
+object.size(df_nest_min) %>% format(units = "GB")
+
+
+### Unnest the data frame
+df_min_unnest <- df_nest_min %>%
+  unnest(df_min)
+
+
+### Drop unnecessary columns
+names(df_min_unnest)
+
+df_min_unnest$error_lgl %>% table()
+
+df_min_unnest <- df_min_unnest %>%
+  select(-error_lgl)
+
+
+### Save as a .rds file 
+object.size(df_min_unnest) %>% format(units = "GB")
+
+temp_path <- file.path(data_dir2, 
+                       "df_N_items_solutions.rds")
+
+saveRDS(df_min_unnest, temp_path)
+
+
+
+###'#######################################################################
+###'
+###' Obtain test lengths (the number of items) that lead to 
+###' the preset level of WLE reliability
+###' via 100 replications
+###'
+###'
+
+### Subset only scalars; remove list columns
+df_min_sum <- df_min_unnest %>%
+  select(-theta, -beta, -logit, -prob, -y)
+
+
+### Summarize based on beta_kind
+df_min_solution <- df_min_sum %>%
+  group_by(sim_cond, DGM, N_person, true_var, WLE_rel, beta_kind) %>%
+  summarize(
+    N_item_mean = mean(N_item), 
+    WLE_rel_bias_mean = mean(min_WLE_bias), 
+    WLE_rel_est_mean = mean(WLE_rel_est)
+  )
+
+temp_path <- file.path(work_dir, 
+                       "tables", 
+                       "df_N_item_solutions_Final.csv")
+
+write_csv(df_min_solution, temp_path)
+
+
+### Which beta_kind does lead to the least required number of items?
+df_beta_compare <- df_min_solution %>%
+  group_by(N_person, WLE_rel, beta_kind) %>%
+  summarize(
+    N_item_mean = mean(N_item_mean), 
+    WLE_rel_bias_mean = mean(WLE_rel_bias_mean), 
+    WLE_rel_est_mean = mean(WLE_rel_est_mean)
+  )
+
+temp_path <- file.path(work_dir, 
+                       "tables", 
+                       "df_N_item_solutions_Final_beta_comparison.csv")
+
+write_csv(df_beta_compare, temp_path)
+
+
