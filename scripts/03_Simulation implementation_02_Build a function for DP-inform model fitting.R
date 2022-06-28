@@ -85,7 +85,7 @@ df_sub <- df %>%
 
 
 ### Extract the example data
-y_mat <- df$y[[1000]]
+y_mat <- df_sub$y[[1000]]
 
 df_sub %>% 
   count(N_person)
@@ -113,43 +113,29 @@ get_postsamp_DPinform_rasch <- function(y_mat, filename){
   #' STEP 2: Define an informative prior 
   #' with respect to \alpha (the precision parameter)
   #' `N_person = 20, 50, 100, 200, 500`
-  info_priors <- list(
-    "25" = c(1.24, 0.64),  # df = 5
-    "50" = c(1.60, 1.22),  # df = 5
-    "75" = c(2.72, 1.36),  # df = 7.5
-    "100" = c(3.88, 1.44), # df = 10
-    "200" = c(7.80, 1.34), # df = 20
-    "300" = c(9.32, 0.88), # df = 30
-    "500" = c(9.32, 0.88)  # df = 50
-  )
-  
-  ab_info <- info_priors[[as.character(nrow(mat_DPmeta))]]
-  
-  a <- ab_info[1]; b <- ab_info[2]
-  
-  prior <- list(a0 = a,      # alpha0: shape param.
-                b0 = b,      # alpha0: rate param.  
-                tau1 = 1,    # G0 variance: shape param.
-                tau2 = 1,    # G0 variance: rate param. 
-                mub = 0, 
-                Sb = 100)    # G0 mean: mean 
-  
-  
-  # STEP 2: Define an informative prior 
-  # with respect to \alpha (the precision parameter)
   n_person <- nrow(y_mat)
   n_item <- ncol(y_mat)
-
+  
   # (1) alpha precision parameter
-  b <- 0.1
-  alpha_mean <- n_person/2
-  a <- alpha_mean*b
-  alpha_var <- a/b^2  
+  info_priors <- list(
+    "20" = c(1.72, 2.00),  # df = 3 
+    "25" = c(1.23, 0.64),  # df = 5
+    "50" = c(1.59, 1.22),  # df = 5
+    "75" = c(2.75, 1.38),  # df = 7.5
+    "100" = c(3.87, 1.44), # df = 10
+    "200" = c(7.43, 1.21), # df = 20
+    "300" = c(9.26, 0.82), # df = 30
+    "500" = c(33.00, 1.19)  # df = 50
+  )
+  
+  ab_info <- info_priors[[as.character(nrow(y_mat))]]
+  
+  a <- ab_info[1]; b <- ab_info[2]
   
   # (2) beta parameters
   beta0 <- rep(0, n_item - 1)
   Sbeta0 <- diag(100, n_item - 1)
-
+  
   prior <- list(a0 = a,      # alpha0: shape param.
                 b0 = b,      # alpha0: rate param.  
                 tau1 = 1,    # G0 variance: shape param.
@@ -158,7 +144,7 @@ get_postsamp_DPinform_rasch <- function(y_mat, filename){
                 Sb = 100,    # G0 mean: variance param. 
                 beta0 = beta0, 
                 Sbeta0 = Sbeta0)    # G0 mean: mean 
-
+  
   
   # STEP 3: Fit the Rasch model with the DP diffuse prior
   outp <- DPrasch(y = y_mat, 
@@ -181,8 +167,8 @@ get_postsamp_DPinform_rasch <- function(y_mat, filename){
   # return(df_posterior)
 }
 
-safe_postsamp_DPdiffuse_rasch <- 
-  safely(get_postsamp_DPdiffuse_rasch) # safe version
+safe_postsamp_DPinform_rasch <- 
+  safely(get_postsamp_DPinform_rasch) # safe version
 
 not_null <- negate(is_null)
 
@@ -207,19 +193,19 @@ plan(multisession, workers = 20)
 df_sub
 
 df_sims_sub <- df_sub %>%
-  filter(N_person %in% c(20, 50))
+  filter(N_person %in% c(500))
 
 
 ### Let's roll! - Fit the models
 tic()
 
 df_sims_sub %>% 
-  #slice(1:10) %>% # slicing for test
+  # slice(1:10) %>% # slicing for test
   
   ### Fit the models & tidy up results
   future_map2(.x = .$y,
               .y = .$cond_name, 
-              .f = ~safe_postsamp_DPdiffuse_rasch(.x, .y),
+              .f = ~safe_postsamp_DPinform_rasch(.x, .y),
               .options = furrr_options(seed = NULL,
                                        chunk_size = NULL,
                                        scheduling = 10),
@@ -237,7 +223,7 @@ df_error <- df_sims_sub %>%
   dplyr::select(sim_cond:beta_kind) %>%
   mutate(error = vec_error)
 
-save_path <- file.path(data_dir, "df_error_DP-diffuse_20_50.rds")
+save_path <- file.path(data_dir, "df_error_DP-inform_500.rds")
 
 write_rds(df_error, save_path)
 

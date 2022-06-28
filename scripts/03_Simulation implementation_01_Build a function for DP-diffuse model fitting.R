@@ -179,7 +179,7 @@ plan(multisession, workers = 20)
 df_sub
 
 df_sims_sub <- df_sub %>%
-  filter(N_person %in% c(20, 50))
+  filter(N_person %in% c(100))
 
 
 ### Let's roll! - Fit the models
@@ -209,10 +209,10 @@ df_error <- df_sims_sub %>%
   dplyr::select(sim_cond:beta_kind) %>%
   mutate(error = vec_error)
 
-save_path <- file.path(data_dir, "df_error_DP-diffuse_20_50.rds")
+save_path <- file.path(data_dir, "df_error_DP-diffuse_100.rds")
 
 write_rds(df_error, save_path)
-
+  
 
 
 
