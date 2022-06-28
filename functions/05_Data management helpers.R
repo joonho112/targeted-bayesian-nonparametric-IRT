@@ -807,8 +807,118 @@ relevel_label_factors <- function(df_cond_pred, vec_focal){
 }
 
 
+###'#######################################################################
+###'
+###' A function for quickly checking site-specific estimation
+###' 
+###' 
+
+check_site_specific_results <- function(postsamp = postsamp_Gaussian1, 
+                                        param = "theta", 
+                                        df_example = df_example){
+  
+  #' Generate site-specific estimates
+  #' Merge with true values
+  df_est <- postsamp %>%
+    data.frame() %>%
+    dplyr::select(contains(param)) %>%
+    as.matrix() %>%
+    HETOP::triple_goal() %>%
+    tibble() %>%
+    rename_with(.fn = ~str_replace(., "theta", param), 
+                .cols = everything()) %>%
+    mutate(!!paste0(param, "_true") := df_example[[param]][[1]]) %>%
+    relocate(!!paste0(param, "_true"), .after = "index")
+  
+  
+  # A quick plot for comparing estimates
+  df_long <- df_est %>%
+    dplyr::select(index, contains(param), -contains("_psd")) %>% 
+    pivot_longer(cols = contains(param), 
+                 names_to = "estimator",
+                 values_to = "estimate")
+  
+  p <- ggplot(data = df_long, 
+              aes(x = estimate, color = estimator, group = estimator)) +
+    geom_density() 
+  
+  # Return the resulting dataframe and plot
+  list(df_est, p)
+}
 
 
+
+###'#######################################################################
+###'
+###' DPM model checker
+###' 
+###' 
+
+DPM_model_check <- function(postsamp){
+  
+  # (1) alpha ~ gamma(a, b) parameters
+  params_alpha <- postsamp %>% 
+    as.data.frame() %>%
+    select(all_of(c("a", "b"))) %>%
+    as.matrix() %>%
+    samplesSummary()
+  
+  # (2) alpha posterior distribution
+  p1 <- postsamp %>% 
+    as.data.frame() %>%
+    select("alpha") %>%
+    ggplot(aes(x = alpha)) + 
+    geom_density() +
+    theme_minimal() + 
+    labs(title = "posterior distribution of alpha (concentration parameter)")
+  
+  # (3) muTilde
+  p2 <- postsamp %>%
+    as.data.frame() %>%
+    dplyr::select(contains("muTilde")) %>% 
+    map(.f = mean) %>%
+    unlist() %>%
+    tibble() %>%
+    set_names("muTilde") %>%
+    ggplot(aes(x = muTilde)) + 
+    geom_density() +
+    theme_minimal() + 
+    labs(title = "posterior distribution of N muTilde's")
+  
+  # (4) s2Tilde
+  p3 <- postsamp %>%
+    as.data.frame() %>%
+    dplyr::select(contains("s2Tilde")) %>% 
+    map(.f = mean) %>%
+    unlist() %>%
+    tibble() %>%
+    set_names("s2Tilde") %>%
+    ggplot(aes(x = s2Tilde)) + 
+    geom_density() +
+    theme_minimal() + 
+    labs(title = "posterior distribution of N s2Tilde's")
+  
+  # (5) zi N vectors
+  p_zi <- postsamp %>%
+    as.data.frame() %>%
+    select(contains("zi")) %>% 
+    pivot_longer(everything(), names_to = "zi", values_to = "est") %>%
+    mutate(zi = factor(zi)) %>%
+    ggplot(aes(x = est, group = zi)) + 
+    geom_density(size = 0.1) + 
+    theme(legend.position = "none") + theme_bw() + 
+    labs(title = "The CRP-distributed vector zi (N overlaid lines)", 
+         x = "cluster ID")
+  
+  
+  p_hyper <- plot_grid(p1, p2, p3, nrow = 3,
+                       labels = "AUTO", label_size = 12, 
+                       align = "v")  
+  
+  # Return results
+  list(params_alpha, p_hyper, p_zi)
+  
+}
 
 
 

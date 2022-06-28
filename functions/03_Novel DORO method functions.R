@@ -8,6 +8,7 @@
 ###' Date: 
 ###' 2020-03-27: initiated
 ###' 2021-12-05: second version created
+###' 2022-02-21: updated with two-step grid search
 ###' 
 ###' Author: JoonHo Lee (`jlee296@ua.edu`)
 ###' 
@@ -175,7 +176,11 @@ plot_K_priors <- function(list_K_priors){
                              color = K_distribution, 
                              linetype = K_distribution)) + 
     geom_line(size = 1) + 
-    scale_x_continuous(breaks = seq(from = 0, to = list_K_priors$J, by = 2)) + 
+    scale_x_continuous(
+      breaks = seq(from = 0, 
+                   to = list_K_priors$J,
+                   by = round(list_K_priors$J/20))
+    ) + 
     labels_temp + theme_preset
 }
 
@@ -256,8 +261,9 @@ get_KLD_info <- function(pi_x, pi_y){
 # parallelly::availableWorkers()
 # plan(multisession, workers = 10)
 
-
-ab_grid_search <- function(J, dof){
+ab_grid_search <- function(J, dof, 
+                           a_seq = c(from = 0, to = 20, by = 1),
+                           b_seq = c(from = 0, to = 20, by = 1)){
   
   ###' Prepare wrapped functions
   safe_get_df_K_priors <- safely(get_df_K_priors)
@@ -267,11 +273,14 @@ ab_grid_search <- function(J, dof){
   
   ###' (1) Set up an input grid
   ###'     - both a, b ranges from 0 to 10
-  n_breaks <- 501
-  x <- seq(0, 10, length = n_breaks)[-1]
+  # n_breaks <- 501
+  # x <- seq(0, 10, length = n_breaks)[-1]
+  
+  grid_a <- seq(a_seq[1], a_seq[2], by = a_seq[3])[-1]
+  grid_b <- seq(b_seq[1], b_seq[2], by = b_seq[3])[-1]
   
   df_grid <- list(
-    J = J, dof = dof, a = x, b = x
+    J = J, dof = dof, a = grid_a, b = grid_b
   ) %>% 
     cross_df() %>%
     mutate(n = 2000) %>%
@@ -314,6 +323,7 @@ ab_grid_search <- function(J, dof){
 }
 
 
+
 # ### Test the function
 # df_ab_grid <- ab_grid_search(J = 35, dof = 5)
 # 
@@ -333,7 +343,9 @@ ab_grid_search <- function(J, dof){
 ###' 
 ###' 
 
-plot_ab_solution <- function(df_ab_grid){
+plot_ab_solution <- function(df_ab_grid, 
+                             a_limit = 10, 
+                             b_limit = 10){
   
   ###' (1) Get a, b solution
   ###'     that minimized the KLD measure
@@ -349,9 +361,9 @@ plot_ab_solution <- function(df_ab_grid){
   dof <- ab_solution$dof
   
   ###' (2) Generate a dataframe to plot
-  ###'     restrict a, b range as 3 times of each a, b solution
+  ###'     restrict a, b ranges (control manually)
   df_plot <- df_ab_grid %>%
-    filter(a < 3*ab_solution$a, b < 3*ab_solution$b)
+    filter(a <= a_limit, b <= b_limit)
   
   ###' (3) Define labels
   label_temp <-   labs(

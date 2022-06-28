@@ -35,7 +35,7 @@ gc(); rm(list=ls())
 
 
 ### Set working directory 
-#work_dir <- c("~/Documents/Bayes-deconvolution")
+work_dir <- c("~/Documents/targeted-bayesian-nonparametric-IRT")
 work_dir <- c("~/targeted-bayesian-nonparametric-IRT") # for Windows
 setwd(work_dir)
 
@@ -58,6 +58,7 @@ library(metR)
 library(future) 
 library(furrr)
 library(progressr)
+library(tictoc)
 
 
 ### Call custom functions
@@ -182,7 +183,8 @@ b <- 2.24
 J <- 35
 
 list_K_priors <- get_df_K_priors(n = 2000, a = 1.78, b = 1.50, J = 35, dof = 3.5)
-
+list_K_priors <- get_df_K_priors(n = 2000, a = 9.32, b = 0.88, J = 100, dof = 25)
+plot_K_priors(list_K_priors)
 
 
 ###'#######################################################################'
@@ -232,7 +234,11 @@ plot_K_priors <- function(list_K_priors){
                              color = K_distribution, 
                              linetype = K_distribution)) + 
     geom_line(size = 1) + 
-    scale_x_continuous(breaks = seq(from = 0, to = J, by = 2)) + 
+    scale_x_continuous(
+      breaks = seq(from = 0, 
+                   to = list_K_priors$J,
+                   by = round(list_K_priors$J/20))
+      ) + 
     labels_temp + theme_preset
 }
 
@@ -308,7 +314,7 @@ safe_get_KLD_info(pi_x = df_K_priors$Chi_squared,
 ### Prepare parallel computation: Set the number of workers
 parallelly::availableCores()
 parallelly::availableWorkers()
-plan(multisession, workers = 20)
+plan(multisession, workers = 10)
 
 
 ab_grid_search <- function(J, dof, 
@@ -373,20 +379,6 @@ ab_grid_search <- function(J, dof,
 }
 
 
-### Test the function
-tic()
-
-df_ab_grid <- ab_grid_search(J = 150, dof = 50)
-
-toc()
-
-idx <- which.min(abs(df_ab_grid$KLD))
-
-ab_solution <- df_ab_grid[idx, ]
-
-plot_K_priors(ab_solution$result[[1]])
-
-
 
 ###'######################################################################
 ###'
@@ -396,7 +388,9 @@ plot_K_priors(ab_solution$result[[1]])
 ###' 
 ###' 
 
-plot_ab_solution <- function(df_ab_grid){
+plot_ab_solution <- function(df_ab_grid, 
+                             a_limit = 10, 
+                             b_limit = 10){
   
   ###' (1) Get a, b solution
   ###'     that minimized the KLD measure
@@ -412,9 +406,9 @@ plot_ab_solution <- function(df_ab_grid){
   dof <- ab_solution$dof
   
   ###' (2) Generate a dataframe to plot
-  ###'     restrict a, b range as 3 times of each a, b solution
+  ###'     restrict a, b ranges (control manually)
   df_plot <- df_ab_grid %>%
-    filter(a < 3*ab_solution$a, b < 3*ab_solution$b)
+    filter(a <= a_limit, b <= b_limit)
     
   ###' (3) Define labels
   label_temp <-   labs(
@@ -446,7 +440,370 @@ plot_ab_solution <- function(df_ab_grid){
 
 
 ### Test the function
-list_solution <- plot_ab_solution(df_KLD)
+list_solution <- plot_ab_solution(df_ab_grid, 
+                                  a_limit = 10, b_limit = 10)
 list_solution[[2]]
 list_solution[[3]]
+
+
+
+###'#######################################################################
+###'
+###' Obtain solutions with the new two-step approach
+###' 
+###' `N_person = 20, 50, 100, 200, 500`
+###' 
+###' < Previous solutions >
+###' 
+###' "25" = c(1.24, 0.64),  # df = 5
+###' "50" = c(1.60, 1.22),  # df = 5
+###' "75" = c(2.72, 1.36),  # df = 7.5
+###' "100" = c(3.88, 1.44), # df = 10
+###' "200" = c(7.80, 1.34), # df = 20
+###' "300" = c(9.32, 0.88), # df = 30
+###' "500" = c(???, ???)  # df = 50
+###'
+###'
+
+### Set the figure saving directory
+save_path <- file.path(work_dir, "figures", "DORO_solutions")
+
+setwd(save_path)
+
+
+
+###'#######################################################################
+###'
+###' (1) J = 25, N_cluster = 5
+###' 
+###' "25" = c(1.24, 0.64),  # df = 5
+###' 
+###' Solution: c(1.23, 0.64)
+###' 
+###' 
+
+### Coarse grid
+df_coarse <- ab_grid_search(J = 25, dof = 5, 
+                            a_seq = c(from = 0, to = 20, by = 1), 
+                            b_seq = c(from = 0, to = 20, by = 1))
+
+list_solution <- plot_ab_solution(df_coarse, 
+                                  a_limit = 20, b_limit = 20)
+
+ggsave("J_25_dof_5_01_coarse_grid.pdf", list_solution[[3]], 
+       width = 7, height = 6)
+
+ggsave("J_25_dof_5_01_coarse_grid_N_cluster.pdf", list_solution[[2]], 
+       width = 10, height = 6)
+
+
+### Fine grid
+
+df_fine <- ab_grid_search(J = 25, dof = 5, 
+                          a_seq = c(from = 0, to = 5, by = 0.01), 
+                          b_seq = c(from = 0, to = 2, by = 0.01))
+
+list_solution <- plot_ab_solution(df_fine, 
+                                  a_limit = 20, b_limit = 20)
+
+ggsave("J_25_dof_5_02_fine_grid.pdf", list_solution[[3]], 
+       width = 7, height = 6)
+
+ggsave("J_25_dof_5_02_fine_grid_N_cluster.pdf", list_solution[[2]], 
+       width = 10, height = 6)
+
+
+
+###'#######################################################################
+###'
+###' (2) J = 50, N_cluster = 5
+###' 
+###' "50" = c(1.60, 1.22),  # df = 5
+###' 
+###' Solution: c(1.59, 1.22)
+###' 
+###' 
+
+### Coarse grid
+df_coarse <- ab_grid_search(J = 50, dof = 5, 
+                            a_seq = c(from = 0, to = 20, by = 1), 
+                            b_seq = c(from = 0, to = 20, by = 1))
+
+list_solution <- plot_ab_solution(df_coarse, 
+                                  a_limit = 20, b_limit = 20)
+
+ggsave("J_50_dof_5_01_coarse_grid.pdf", list_solution[[3]], 
+       width = 7, height = 6)
+
+ggsave("J_50_dof_5_01_coarse_grid_N_cluster.pdf", list_solution[[2]], 
+       width = 10, height = 6)
+
+
+### Fine grid
+df_fine <- ab_grid_search(J = 50, dof = 5, 
+                          a_seq = c(from = 0, to = 5, by = 0.01), 
+                          b_seq = c(from = 0, to = 2, by = 0.01))
+
+list_solution <- plot_ab_solution(df_fine, 
+                                  a_limit = 20, b_limit = 20)
+
+ggsave("J_50_dof_5_02_fine_grid.pdf", list_solution[[3]], 
+       width = 7, height = 6)
+
+ggsave("J_50_dof_5_02_fine_grid_N_cluster.pdf", list_solution[[2]], 
+       width = 10, height = 6)
+
+
+
+###'#######################################################################
+###'
+###' (3) J = 75, N_cluster = 7.5
+###' 
+###' "75" = c(2.72, 1.36),  # df = 7.5
+###' 
+###' Solution: c(2.75, 1.38)
+###' 
+###' 
+
+### Coarse grid
+df_coarse <- ab_grid_search(J = 75, dof = 7.5, 
+                            a_seq = c(from = 0, to = 20, by = 1), 
+                            b_seq = c(from = 0, to = 20, by = 1))
+
+list_solution <- plot_ab_solution(df_coarse, 
+                                  a_limit = 20, b_limit = 20)
+
+ggsave("J_75_dof_7.5_01_coarse_grid.pdf", list_solution[[3]], 
+       width = 7, height = 6)
+
+ggsave("J_75_dof_7.5_01_coarse_grid_N_cluster.pdf", list_solution[[2]], 
+       width = 10, height = 6)
+
+
+### Fine grid
+df_fine <- ab_grid_search(J = 75, dof = 7.5, 
+                          a_seq = c(from = 0, to = 5, by = 0.01), 
+                          b_seq = c(from = 0, to = 2, by = 0.01))
+
+list_solution <- plot_ab_solution(df_fine, 
+                                  a_limit = 20, b_limit = 20)
+
+ggsave("J_75_dof_7.5_02_fine_grid.pdf", list_solution[[3]], 
+       width = 7, height = 6)
+
+ggsave("J_75_dof_7.5_02_fine_grid_N_cluster.pdf", list_solution[[2]], 
+       width = 10, height = 6)
+
+
+
+###'#######################################################################
+###'
+###' (4) J = 100, N_cluster = 10
+###' 
+###' "100" = c(3.88, 1.44), # df = 10
+###' 
+###' Solution: c(3.87, 1.44)
+###' 
+###' 
+
+### Coarse grid
+df_coarse <- ab_grid_search(J = 100, dof = 10, 
+                            a_seq = c(from = 0, to = 20, by = 1), 
+                            b_seq = c(from = 0, to = 20, by = 1))
+
+list_solution <- plot_ab_solution(df_coarse, 
+                                  a_limit = 20, b_limit = 20)
+
+ggsave("J_100_dof_10_01_coarse_grid.pdf", list_solution[[3]], 
+       width = 7, height = 6)
+
+ggsave("J_100_dof_10_01_coarse_grid_N_cluster.pdf", list_solution[[2]], 
+       width = 10, height = 6)
+
+
+### Fine grid
+df_fine <- ab_grid_search(J = 100, dof = 10, 
+                          a_seq = c(from = 2, to = 7, by = 0.01), 
+                          b_seq = c(from = 1, to = 3, by = 0.01))
+
+list_solution <- plot_ab_solution(df_fine, 
+                                  a_limit = 20, b_limit = 20)
+
+ggsave("J_100_dof_10_02_fine_grid.pdf", list_solution[[3]], 
+       width = 7, height = 6)
+
+ggsave("J_100_dof_10_02_fine_grid_N_cluster.pdf", list_solution[[2]], 
+       width = 10, height = 6)
+
+
+
+###'#######################################################################
+###'
+###' (5) J = 200, N_cluster = 20
+###' 
+###' "200" = c(7.80, 1.34), # df = 20
+###' 
+###' -> Work with J = 150
+###' 
+###' Solution: c(7.43, 1.21)
+###' 
+###' 
+
+### Coarse grid
+df_coarse <- ab_grid_search(J = 150, dof = 20, 
+                            a_seq = c(from = 0, to = 20, by = 1), 
+                            b_seq = c(from = 0, to = 20, by = 1))
+
+list_solution <- plot_ab_solution(df_coarse, 
+                                  a_limit = 20, b_limit = 20)
+
+ggsave("J_150_dof_20_01_coarse_grid.pdf", list_solution[[3]], 
+       width = 7, height = 6)
+
+ggsave("J_150_dof_20_01_coarse_grid_N_cluster.pdf", list_solution[[2]], 
+       width = 10, height = 6)
+
+
+### Fine grid
+df_fine <- ab_grid_search(J = 150, dof = 20, 
+                          a_seq = c(from = 3, to = 9, by = 0.01), 
+                          b_seq = c(from = 0, to = 3, by = 0.01))
+
+list_solution <- plot_ab_solution(df_fine, 
+                                  a_limit = 20, b_limit = 20)
+
+ggsave("J_150_dof_20_02_fine_grid.pdf", list_solution[[3]], 
+       width = 7, height = 6)
+
+ggsave("J_150_dof_20_02_fine_grid_N_cluster.pdf", list_solution[[2]], 
+       width = 10, height = 6)
+
+
+
+###'#######################################################################
+###'
+###' (6) J = 300, N_cluster = 30
+###' 
+###' "300" = c(9.32, 0.88), # df = 30
+###' 
+###' -> Work with J = 150
+###' 
+###' Solution: c(9.26, 0.82)
+###' 
+###' 
+
+### Coarse grid
+df_coarse <- ab_grid_search(J = 150, dof = 30, 
+                            a_seq = c(from = 0, to = 20, by = 1), 
+                            b_seq = c(from = 0, to = 20, by = 1))
+
+list_solution <- plot_ab_solution(df_coarse, 
+                                  a_limit = 20, b_limit = 20)
+
+ggsave("J_150_dof_30_01_coarse_grid.pdf", list_solution[[3]], 
+       width = 7, height = 6)
+
+ggsave("J_150_dof_30_01_coarse_grid_N_cluster.pdf", list_solution[[2]], 
+       width = 10, height = 6)
+
+
+### Fine grid
+df_fine <- ab_grid_search(J = 150, dof = 30, 
+                          a_seq = c(from = 8, to = 14, by = 0.01), 
+                          b_seq = c(from = 0, to = 3, by = 0.01))
+
+list_solution <- plot_ab_solution(df_fine, 
+                                  a_limit = 20, b_limit = 20)
+
+ggsave("J_150_dof_30_02_fine_grid.pdf", list_solution[[3]], 
+       width = 7, height = 6)
+
+ggsave("J_150_dof_30_02_fine_grid_N_cluster.pdf", list_solution[[2]], 
+       width = 10, height = 6)
+
+
+
+###'#######################################################################
+###'
+###' (7) J = 500, N_cluster = 50
+###' 
+###' "500" = c(???, ???), # df = 50
+###' 
+###' -> Work with J = 150
+###' 
+###' Solution: c(33, 1.19)
+###' 
+###' 
+
+### Coarse grid
+df_coarse <- ab_grid_search(J = 150, dof = 50, 
+                            a_seq = c(from = 0, to = 50, by = 1), 
+                            b_seq = c(from = 0, to = 50, by = 1))
+
+list_solution <- plot_ab_solution(df_coarse, 
+                                  a_limit = 50, b_limit = 50)
+
+ggsave("J_150_dof_50_01_coarse_grid.pdf", list_solution[[3]], 
+       width = 7, height = 6)
+
+ggsave("J_150_dof_50_01_coarse_grid_N_cluster.pdf", list_solution[[2]], 
+       width = 10, height = 6)
+
+
+### Fine grid
+df_fine <- ab_grid_search(J = 150, dof = 50, 
+                          a_seq = c(from = 23, to = 33, by = 0.01), 
+                          b_seq = c(from = 0, to = 3, by = 0.01))
+
+list_solution <- plot_ab_solution(df_fine, 
+                                  a_limit = 50, b_limit = 50)
+
+ggsave("J_150_dof_50_02_fine_grid.pdf", list_solution[[3]], 
+       width = 7, height = 6)
+
+ggsave("J_150_dof_50_02_fine_grid_N_cluster.pdf", list_solution[[2]], 
+       width = 10, height = 6)
+
+
+
+
+###'#######################################################################
+###'
+###' (8) J = 20, N_cluster = 3
+###' 
+###' "25" = c(1.24, 0.64),  # df = 5
+###' 
+###' Solution: c(1.72, 2.00)
+###' 
+###' 
+
+### Coarse grid
+df_coarse <- ab_grid_search(J = 20, dof = 3, 
+                            a_seq = c(from = 0, to = 20, by = 1), 
+                            b_seq = c(from = 0, to = 20, by = 1))
+
+list_solution <- plot_ab_solution(df_coarse, 
+                                  a_limit = 20, b_limit = 20)
+
+ggsave("J_20_dof_3_01_coarse_grid.pdf", list_solution[[3]], 
+       width = 7, height = 6)
+
+ggsave("J_20_dof_3_01_coarse_grid_N_cluster.pdf", list_solution[[2]], 
+       width = 10, height = 6)
+
+
+### Fine grid
+
+df_fine <- ab_grid_search(J = 20, dof = 3, 
+                          a_seq = c(from = 0, to = 10, by = 0.01), 
+                          b_seq = c(from = 0, to = 5, by = 0.01))
+
+list_solution <- plot_ab_solution(df_fine, 
+                                  a_limit = 20, b_limit = 20)
+
+ggsave("J_20_dof_3_02_fine_grid.pdf", list_solution[[3]], 
+       width = 7, height = 6)
+
+ggsave("J_20_dof_3_02_fine_grid_N_cluster.pdf", list_solution[[2]], 
+       width = 10, height = 6)
 
