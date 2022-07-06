@@ -234,10 +234,10 @@ plan(multisession, workers = 10)
 ### Subset the conditions
 df_pre
 
-df_sims_sub <- df_pre
+# df_sims_sub <- df_pre
 
-# df_sims_sub <- df_pre %>%
-#   filter(N_person %in% c(20, 50))
+df_sims_sub <- df_pre %>%
+  filter(N_person %in% c(20, 50))
 
 
 ### Let's roll! - Fit the model
@@ -267,7 +267,7 @@ df_error <- df_sims_sub %>%
   dplyr::select(sim_cond:beta_kind) %>%
   mutate(error = vec_error)
 
-save_path <- file.path(data_dir2, "df_error_DPinform.rds")
+save_path <- file.path(data_dir2, "df_error_DPinform_N_20_50.rds")
 
 write_rds(df_error, save_path)
 

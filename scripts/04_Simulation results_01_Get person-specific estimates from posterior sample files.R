@@ -43,6 +43,11 @@ setwd(work_dir)
 library(tidyverse)
 library(HETOP)
 
+library(future) 
+library(furrr)
+library(progressr)
+library(tictoc)
+
 
 ### Call custom functions
 list.files(file.path(work_dir, "functions"), full.names = TRUE) %>% 
@@ -74,37 +79,66 @@ rm(df_pregen)
 object.size(df_pre) %>% format("MB")
 
 
-### Extract the example data
-y_mat <- df_pre$y[[1000]]
-
-df_pre %>% 
-  count(N_person)
-
-
 
 ###'#######################################################################
 ###'
-###' Example file
+###' Set things up to process posterior samples
 ###'
 ###'
 
-###' Define the file path containing the posterior samples: An Example
-temp_path <- file.path(data_dir2, 
-                       "posterior_sample_DP-diffuse_20_50_100_200")
+### Set data containing directories
+path_Gaussian <- file.path(data_dir2, 
+                           "posterior_sample_Gaussian_NIMBLE_rep_001-020")
 
-model_name <- c("DP-diffuse")
+path_DPinform <- file.path(data_dir2, 
+                           "posterior_sample_DPinform_NIMBLE_rep_001-005")
+
+path_DPdiffuse <- file.path(data_dir2, 
+                           "posterior_sample_DPdiffuse_NIMBLE_rep_001-005")
+
+folder_path <- path_Gaussian # for test
 
 
-###' Pick one case
-list_files <- list.files(temp_path)
+### Define a function to prepare the posterior sample processing
+prepare_postsamp_process <- function(df_pre, folder_path, 
+                                     model_name = "Gaussian", 
+                                     remove_unmatched = TRUE){
+  
+  df_temp <- list.files(folder_path) %>%
+    tibble() %>%
+    set_names("file_name") %>%
+    mutate(cond_name = str_remove(file_name, ".rds")) %>%
+    mutate(file_path = file.path(folder_path, file_name))
+  
+  df_merged <- df_pre %>%
+    full_join_track(df_temp, by = c("cond_name")) %>%
+    mutate(model = model_name) %>%
+    select(model, everything())
+  
+  if (remove_unmatched == TRUE){
+    
+    df_merged %>%
+      filter(!is.na(file_path))
+    
+  } else if (remove_unmatched == FALSE){   
+    
+    df_merged
+  } 
+}
 
-file_name <- sample(list_files, 1)
 
-file_path <- file.path(temp_path, file_name)
+### Apply to each postsamp folder
+df_Gaussian <- prepare_postsamp_process(df_pre, path_Gaussian, "Gaussian", TRUE)
+df_DPinform <- prepare_postsamp_process(df_pre, path_DPinform, "DP-inform", TRUE)
+df_DPdiffuse <- prepare_postsamp_process(df_pre, path_DPdiffuse, "DP-diffuse", TRUE)
 
-idx <- which(df_pre$cond_name == file_name %>% str_remove(".rds"))  
 
-df_pre_row <- df_pre[idx, ]
+### Bind as one tibble
+df_init <- bind_rows(df_Gaussian, df_DPinform, df_DPdiffuse) %>%
+  mutate(model = factor(model, levels = c("Gaussian", "DP-inform", "DP-diffuse")))
+
+object.size(df_init) %>% format("MB")
+
 
 
 ###'#######################################################################'
@@ -113,7 +147,7 @@ df_pre_row <- df_pre[idx, ]
 ###' 
 ###' -> Generate posterior summary estimates for 
 ###' 
-###'    the site-specific parameters (`tau_j`)
+###'    the site-specific parameters (`theta_p`, `beta_i`, `hyperparam`)
 ###' 
 ###'    and merge true values and ML estimates
 ###'    
@@ -122,7 +156,8 @@ df_pre_row <- df_pre[idx, ]
 ###'    not the `posterior sample` themselves
 ###'    to save memory usage
 ###' 
-###'    
+###' -> Reference book from the multisite trial study
+###'     
 ###' `n_j`: implied site size per site j
 ###' 
 ###' `se2_j`: sampling variance (SE^2) per site j
@@ -147,158 +182,203 @@ df_pre_row <- df_pre[idx, ]
 ###' 
 ###' 
 
-gen_site_estimates2 <- function(df_pre_row, 
-                                file_path){
+gen_site_estimates2 <- function(file_path, theta, beta, model){
   
-  #' (1) Import the posterior sample file
-  if (str_detect(file_path, ".fst")){ 
-    
-    postsamp <- read_fst(file_path)
-    
-  } else if (str_detect(file_path, ".rds")){
-    
-    postsamp <- readRDS(file_path)
-    
-  }
+  # (1) Import the posterior sample .rds file
+  postsamp <- read_rds(file_path) 
   
-  postsamp_theta <- postsamp[[1]]
-  postsamp_hyper <- postsamp[[2]]
-  postsamp_beta <- postsamp[[3]]
+  df_postsamp <- postsamp %>% 
+    as.data.frame() %>%
+    tibble() %>%
+    set_names(colnames(postsamp))
   
   
-  # (2-1) Generate posterior summary estimates: theta (person parameters)
-  df_est_theta <- postsamp_theta %>%
-    dplyr::select(contains("theta_")) %>%
+  # (2) Generate posterior summary estimates: theta (person parameters)
+  df_theta <- df_postsamp %>%
+    dplyr::select(contains("theta")) %>%
     as.matrix() %>%
     HETOP::triple_goal() %>%
-    mutate(theta_true = df_pre_row$theta[[1]]) %>%
+    mutate(theta_true = theta) %>%
     relocate(theta_true, .before = "theta_pm") %>%
+    rename(
+      'person_id' = 'index',
+      'theta_rbar' = 'rbar', 
+      'theta_rhat' = 'rhat'
+    ) %>%
     tibble()
   
-  # (2-2) Generate posterior summary estimates: beta (item parameters)
-  df_est_beta0 <- postsamp_beta %>%
+  # (3) Generate posterior summary estimates: beta (item parameters)
+  df_beta <- df_postsamp %>%
     dplyr::select(contains("beta")) %>%
     as.matrix() %>%
     HETOP::triple_goal() %>%
-    mutate(beta_true = df_pre_row$beta[[1]][-1])
+    mutate(theta_true = beta) %>%
+    relocate(theta_true, .before = "theta_pm") %>%
+    rename(
+      'item_id' = 'index',
+      'theta_rbar' = 'rbar', 
+      'theta_rhat' = 'rhat'
+    ) %>%
+    tibble() %>%
+    rename_with(~str_replace(.x, "theta", "beta"))
   
-  temp_names <- names(df_est_beta0) %>%
-    str_replace("theta_", "beta_")
+  # (4) Generate posterior summary estimates: hyperparameters
+  if (model %in% c("Gaussian")){ 
+    
+    df_hyper <- df_postsamp %>%
+      dplyr::select(-contains("theta")) %>%
+      dplyr::select(-contains("beta")) %>%
+      summarize(
+        nu1_fix = mean(nu1),
+        nu2_fix = mean(nu2), 
+        s_tht_mean = mean(sqrt(s2_tht)), 
+        s_tht_sd = sd(sqrt(s2_tht)), 
+        s_tht_min = min(sqrt(s2_tht)), 
+        s_tht_max = max(sqrt(s2_tht))
+      )
+      
+  } else if (model %in% c("DP-inform", "DP-diffuse")){ 
+    
+    df_sub <- df_postsamp %>%
+      dplyr::select(-contains("theta")) %>%
+      dplyr::select(-contains("beta"))
+    
+    # alpha
+    df_alpha <- df_sub %>%
+      select(a, b, alpha) %>%
+      summarize(
+        a_fix = mean(a), 
+        b_fix = mean(b),
+        alpha_mean_drv = a_fix/b_fix, # theoretically derived alpha mean 
+        alpha_mean_est = mean(alpha), 
+        alpha_sd_drv = sqrt(a_fix)/b_fix, # theoretically derived alpha sd 
+        alpha_sd_est = sd(alpha)
+      )
+    
+    # mu_tilde
+    df_mutilde <- df_sub %>%
+      dplyr::select(contains("muTilde")) %>%
+      map_dfr(summary, .id = "stat")
+    
+    # s2_tilde
+    df_s2tilde <- df_sub %>%
+      dplyr::select(contains("s2Tilde")) %>%
+      map_dfr(summary, .id = "stat")
+    
+    # clustering behaviors
+    df_zi <- df_sub %>%
+      dplyr::select(contains("zi")) %>%
+      pivot_longer(contains("zi"), names_to = "zi", values_to = "cluster_id") %>%
+      arrange(zi, cluster_id) %>%
+      count(cluster_id) %>%
+      mutate(percent= 100*(n/sum(n)))
+      
+    # df_Nclust <- df_sub %>%
+    #   dplyr::select(contains("zi")) %>%
+    #   map(unique, .id = "zi") %>%
+    #   map_int(length) 
+    
+    df_hyper <- list(df_alpha, df_zi, df_mutilde, df_s2tilde)
+  } 
   
-  df_est_beta <- df_est_beta0 %>% 
-    set_names(temp_names) %>%
-    tibble()
-  
-  
-  # (3) Merge with original simulation data
-  df_merged <- sim_data %>%
-    bind_cols(df_est) %>%
-    dplyr::select(site_id = index, 
-                  n_j, se2_j, 
-                  tau_j_true = tau_j, 
-                  tau_j_ML = tau_j_hat, 
-                  tau_j_PM = theta_pm, 
-                  tau_j_PSD = theta_psd, 
-                  tau_j_CB = theta_cb, 
-                  tau_j_GR = theta_gr, 
-                  R_bar = rbar, 
-                  R_hat = rhat)
-  
-  return(df_merged)
+  # (5) Return results
+  list(df_theta, df_beta, df_hyper)
 }
 
-safe_gen_site_estimates2 <- safely(gen_site_estimates2)
-not_null <- negate(is_null)
+
+# ### Safe version function
+# safe_gen_site_estimates2 <- safely(gen_site_estimates2)
+# not_null <- negate(is_null)
 
 
-# ### Testing: apply the gen_site_estimates() function
-# df_temp <- df_sims_sub3 %>%
-#   slice(1:5) %>%
-#   mutate(site_est = map2(.x = sim_data, 
-#                          .y = file_path, 
-#                          .f = gen_site_estimates2))
+# ### Example application
+# df_init_row <- df_init %>%
+#   filter(model == "DP-inform") %>%
+#   slice_sample(n = 1)
 
 
-
-df_est_theta_long <- df_est_theta %>%
-  select(-rbar, -rhat, -theta_psd) %>%
-  pivot_longer(theta_true:theta_gr, names_to = "type", values_to = "estimate") %>%
-  mutate(type = factor(type))
-
-ggplot(data = df_est_theta_long, aes(x = estimate)) +
-  geom_density() +
-  facet_wrap(~type)
-
-
-
-###'#######################################################################'
-###'
-###' Define a function: `collect_postsamp()`
-###' 
-###' To collect posterior samples as list-columns
-###' 
-###' 
-
-###' Define the file path containing the posterior samples: An Example
-temp_path <- file.path(data_dir2, 
-                       "posterior_sample_DP-diffuse_20_50_100_200")
-
-model_name <- c("DP-diffuse")
-
-
-### Define a function to create a tibble with the `postsamp` list-column
-collect_postsamp <- function(temp_path, model_name){
+### Test the defined function
+df_temp <- df_init %>%
+  select(file_path, theta, beta, model) %>%
+  slice_head(n = 10) %>%
+  mutate(
+    list_temp = pmap(.l = ., .f = gen_site_estimates2)
+  ) %>%
+  mutate(
+    df_theta = map(.x = list_temp, .f = 1), 
+    df_beta = map(.x = list_temp, .f = 2), 
+    df_hyper = map(.x = list_temp, .f = 3)
+  ) %>% 
+  select(-list_temp, -theta, -beta)
   
-  # Import all simulation results as a list
-  setwd(temp_path)
-  
-  list_posterior <- list.files(temp_path) %>%
-    # head() %>% 
-    map(readRDS) 
-
-  # Convert to a tibble dataframe
-  df_posterior <- tibble(
-    
-    cond_name = list.files(temp_path) %>%
-      head() %>%
-      str_remove(".rds"), 
-    
-    model = model_name, 
-  
-    postsamp_theta = list_posterior %>% map(.f = 1), 
-    postsamp_hyper = list_posterior %>% map(.f = 2), 
-    postsamp_beta = list_posterior %>% map(.f = 3)
-    
-  )
-  
-  return(df_posterior)
-}
+df_merged <- df_init %>%
+  right_join(df_temp, by = c("file_path", "model"))
 
 
 
 ###'#######################################################################
 ###'
-###' Collect posterior samples
+###' Apply the `gen_site_estimates2()` function to all rows
 ###'
 ###'
 
-###' (1) DP-diffuse
-temp_path <- file.path(data_dir2, 
-                       "posterior_sample_DP-diffuse_20_50_100_200")
-
-model_name <- c("DP-diffuse")
-
-df_posterior1 <- collect_postsamp(temp_path, model_name = "DP-diffuse")
+### Prepare parallel computation: Set the number of workers
+parallelly::availableCores()
+parallelly::availableWorkers()
+plan(multisession, workers = 10)
 
 
+### Processed tibble
+df_init
+
+df_init %>% 
+  count(model)
 
 
+### Let's roll!
+tic()
+
+df_est <- df_init %>%
+  select(file_path, theta, beta, model) %>%
+  # slice_head(n = 10) %>%
+  mutate(
+    list_temp = future_pmap(
+      .l = ., 
+      .f = gen_site_estimates2, 
+      .options = furrr_options(seed = NULL,
+                               chunk_size = 100,
+                               scheduling = 1),
+      .progress = TRUE
+    )
+  )
+
+toc()
+
+object.size(df_est) %>% format("MB")
 
 
+### Post-processing
+df_est2 <- df_est %>%
+  mutate(
+    df_theta = map(.x = list_temp, .f = 1), 
+    df_beta = map(.x = list_temp, .f = 2), 
+    df_hyper = map(.x = list_temp, .f = 3)
+  ) %>% 
+  select(-list_temp, -theta, -beta)
+
+rm(df_est)
 
 
+### Merge into the original data
+df_site_est <- df_init %>%
+  right_join(df_est2, by = c("file_path", "model"))
+
+object.size(df_site_est) %>% format("MB")
 
 
+### Save the resulting dataset
+save_path <- file.path(data_dir2, "df_site_est_temp.rds")
 
+write_rds(df_site_est, save_path)
 
 
