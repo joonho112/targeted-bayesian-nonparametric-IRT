@@ -234,12 +234,12 @@ list_rep <- split(66:100, rep(1:12, each = 3))
 ### Construct a for loop for memory savings
 tic()
 
-<<<<<<< HEAD
+
 # df_sims_sub <- df_pre
 
 df_sims_sub <- df_pre %>%
   filter(N_person %in% c(20, 50))
-=======
+
 for (i in seq_along(list_rep)){
   for (j in seq_along(vec_DGM)){
     for (k in seq_along(vec_N_person)){
@@ -283,7 +283,7 @@ for (i in seq_along(list_rep)){
     }
   }
 }
->>>>>>> f433bd4db8b5be951f4de11d1f515d7d167cb108
+
 
 toc()
 
@@ -303,7 +303,7 @@ df_example <- df_sims_sub[25, ]
 ### DPM model check
 DPdiffuse_check <- DPM_model_check(postsamp = postsamp)
 
-<<<<<<< HEAD
+
 ### Check out errors and save the dataframe
 df_error <- df_sims_sub %>%
   # slice(1:10) %>% # slicing for test
@@ -333,9 +333,5 @@ write_rds(df_error, save_path)
 # DPdiffuse_check[1]
 # DPdiffuse_check[2]
 # DPdiffuse_check[3]
-=======
-DPdiffuse_check[1]
-DPdiffuse_check[2]
-DPdiffuse_check[3]
->>>>>>> f433bd4db8b5be951f4de11d1f515d7d167cb108
+
 

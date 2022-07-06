@@ -27,13 +27,13 @@ gc(); rm(list=ls())
 
 ### Set working directory and data directory 
 work_dir <- file.path(path.expand("~"), 
-                      "Documents",
+                      # "Documents",
                       "targeted-bayesian-nonparametric-IRT") 
 
 data_dir <- file.path(work_dir, "datasets")
 
 data_dir2 <- file.path(path.expand("~"), 
-                       "Documents", 
+                       # "Documents", 
                        "Data-files", 
                        "targeted-bayesian-nonparametric-IRT-large-files")
 setwd(work_dir)
@@ -88,13 +88,13 @@ object.size(df_pre) %>% format("MB")
 
 ### Set data containing directories
 path_Gaussian <- file.path(data_dir2, 
-                           "posterior_sample_Gaussian_NIMBLE_rep_001-020")
+                           "posterior_sample_Gaussian_NIMBLE_completed")
 
 path_DPinform <- file.path(data_dir2, 
-                           "posterior_sample_DPinform_NIMBLE_rep_001-005")
+                           "posterior_sample_DPinform_NIMBLE_completed")
 
 path_DPdiffuse <- file.path(data_dir2, 
-                           "posterior_sample_DPdiffuse_NIMBLE_rep_001-005")
+                           "posterior_sample_DPdiffuse_NIMBLE_completed")
 
 folder_path <- path_Gaussian # for test
 
@@ -314,6 +314,8 @@ df_temp <- df_init %>%
 df_merged <- df_init %>%
   right_join(df_temp, by = c("file_path", "model"))
 
+rm(df_temp); rm(df_merged)
+
 
 
 ###'#######################################################################
@@ -322,63 +324,119 @@ df_merged <- df_init %>%
 ###'
 ###'
 
-### Prepare parallel computation: Set the number of workers
-parallelly::availableCores()
-parallelly::availableWorkers()
-plan(multisession, workers = 10)
+### Prepare chopped looping for memory savings
+vec_model <- c("Gaussian", "DP-inform", "DP-diffuse")
+vec_DGM <- c("Gaussian", "ALD", "Mixed")
+# list_rep <- split(66:100, rep(1:12, each = 3))
 
 
-### Processed tibble
-df_init
-
-df_init %>% 
-  count(model)
-
-
-### Let's roll!
+### Construct a for loop for memory savings
 tic()
 
-df_est <- df_init %>%
-  select(file_path, theta, beta, model) %>%
-  # slice_head(n = 10) %>%
+for (i in seq_along(vec_model)){
+  for (j in seq_along(vec_DGM)){
+    
+    # Print progress
+    cat(paste0("model: ", vec_model[i]), "/", 
+        paste0("DGM: ", vec_DGM[j]), "\n")
+    
+    # Prepare parallel computation: Set the number of workers
+    # parallelly::availableCores()
+    # parallelly::availableWorkers()
+    plan(multisession, workers = 19)
+    
+    # Subset the conditions
+    df_init_sub <- df_init %>%
+      filter(model %in% vec_model[i]) %>%
+      filter(DGM %in% vec_DGM[j])
+    
+    # Let's roll!
+    tic()
+    
+    df_est <- df_init_sub %>%
+      select(file_path, theta, beta, model) %>%
+      # slice_head(n = 10) %>%
+      mutate(
+        list_temp = future_pmap(
+          .l = ., 
+          .f = gen_site_estimates2, 
+          .options = furrr_options(seed = NULL,
+                                   chunk_size = 100,
+                                   scheduling = 2),
+          .progress = TRUE
+        )
+      )
+    
+    toc()
+    
+    ### Post-processing
+    df_est2 <- df_est %>%
+      mutate(
+        df_theta = map(.x = list_temp, .f = 1), 
+        df_beta = map(.x = list_temp, .f = 2), 
+        df_hyper = map(.x = list_temp, .f = 3)
+      ) %>% 
+      select(-list_temp, -theta, -beta)
+    
+    rm(df_est)
+    
+    ### Merge into the original data
+    df_site_est_sub <- df_init_sub %>%
+      right_join(df_est2, by = c("file_path", "model"))
+    
+    ### Save the resulting dataset
+    file_name <- paste0("df_site_est_", 
+                        "model_", vec_model[i], "_", 
+                        "DGM_", vec_DGM[j], ".rds")
+    
+    save_path <- file.path(data_dir2, 
+                           "df_site_est", 
+                           file_name)
+    
+    write_rds(df_site_est_sub, save_path)
+
+  }
+}
+
+toc()
+
+
+
+###'#######################################################################
+###'
+###' Bind into one tibble
+###'
+###'
+
+### Load all dataframes
+save_path <- file.path(data_dir2, "df_site_est")
+
+tic()
+
+df_temp <- list.files(save_path) %>%
+  tibble() %>%
+  set_names(c("file_name")) %>%
+  mutate(file_path = file.path(save_path, file_name)) %>%
   mutate(
-    list_temp = future_pmap(
-      .l = ., 
-      .f = gen_site_estimates2, 
-      .options = furrr_options(seed = NULL,
-                               chunk_size = 100,
-                               scheduling = 1),
-      .progress = TRUE
-    )
+    data = future_map(.x = file_path, 
+                      .f = read_rds, 
+                      .options = furrr_options(seed = NULL,
+                                               chunk_size = 1,
+                                               scheduling = 1),
+                      .progress = TRUE)
   )
 
 toc()
 
-object.size(df_est) %>% format("MB")
+
+### Bind rows
+df_site_est <- bind_rows(df_temp$data)
+
+object.size(df_site_est) %>% format("GB")
 
 
-### Post-processing
-df_est2 <- df_est %>%
-  mutate(
-    df_theta = map(.x = list_temp, .f = 1), 
-    df_beta = map(.x = list_temp, .f = 2), 
-    df_hyper = map(.x = list_temp, .f = 3)
-  ) %>% 
-  select(-list_temp, -theta, -beta)
-
-rm(df_est)
-
-
-### Merge into the original data
-df_site_est <- df_init %>%
-  right_join(df_est2, by = c("file_path", "model"))
-
-object.size(df_site_est) %>% format("MB")
-
-
-### Save the resulting dataset
-save_path <- file.path(data_dir2, "df_site_est_temp.rds")
+### Save the resulting file
+save_path <- file.path(data_dir2, "df_site_est", "df_site_est_collected.rds")
 
 write_rds(df_site_est, save_path)
-
 

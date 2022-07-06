@@ -28,13 +28,13 @@ gc(); rm(list=ls())
 
 ### Set working directory and data directory 
 work_dir <- file.path(path.expand("~"), 
-                      "Documents",
+                      # "Documents",
                       "targeted-bayesian-nonparametric-IRT") 
 
 data_dir <- file.path(work_dir, "datasets")
 
 data_dir2 <- file.path(path.expand("~"), 
-                       "Documents", 
+                       # "Documents", 
                        "Data-files", 
                        "targeted-bayesian-nonparametric-IRT-large-files")
 setwd(work_dir)
@@ -62,7 +62,9 @@ list.files(file.path(work_dir, "functions"), full.names = TRUE) %>%
 ###'
 ###'
 
-load_path <- file.path(data_dir2, "df_site_est_temp.rds")
+load_path <- file.path(data_dir2, 
+                       "df_site_est", 
+                       "df_site_est_collected.rds")
 
 df_site_est <- read_rds(load_path)
 
@@ -161,7 +163,7 @@ df_loss_beta <- df_site_est %>%
 ### Prepare parallel computation: Set the number of workers
 parallelly::availableCores()
 parallelly::availableWorkers()
-plan(multisession, workers = 10)
+plan(multisession, workers = 19)
 
 
 ### Calculate performance indicators: (1) theta
@@ -174,7 +176,7 @@ df_loss_theta <- df_site_est %>%
                             .f = get_losses,
                             .options = furrr_options(seed = NULL,
                                                      chunk_size = 100,
-                                                     scheduling = 1),
+                                                     scheduling = 2),
                             .progress = TRUE)
   ) %>%
   select(-(theta:y), -(file_name:file_path), -(df_theta:df_hyper)) %>%
@@ -194,7 +196,7 @@ df_loss_beta <- df_site_est %>%
                            .f = get_losses,
                            .options = furrr_options(seed = NULL,
                                                     chunk_size = 100,
-                                                    scheduling = 1),
+                                                    scheduling = 2),
                            .progress = TRUE)
   ) %>%
   select(-(theta:y), -(file_name:file_path), -(df_theta:df_hyper)) %>%
@@ -257,7 +259,8 @@ df_loss3 <- df_loss2 %>%
 ###'
 
 save_path <- file.path(data_dir2, 
-                       "df_loss_estimates_WIDE_temp.rds")
+                       "df_site_est", 
+                       "df_loss_estimates_WIDE_collected.rds")
 
 write_rds(df_loss3, save_path)
 
@@ -301,7 +304,8 @@ tbl_ref <- tibble(vec_var, list_levels, list_labels) %>%
 
 ### Load the wide file
 load_path <- file.path(data_dir2, 
-                       "df_loss_estimates_WIDE_temp.rds")
+                       "df_site_est", 
+                       "df_loss_estimates_WIDE_collected.rds")
 
 df_loss_wide <- read_rds(load_path)
 
@@ -356,7 +360,8 @@ df_loss_long2 <- df_loss_long %>%
 ###'
 
 save_path <- file.path(data_dir2, 
-                       "df_loss_estimates_LONG_temp.rds")
+                       "df_site_est", 
+                       "df_loss_estimates_LONG_collected.rds")
 
 object.size(df_loss_long2) %>% format("MB")
 
