@@ -214,8 +214,12 @@ not_null <- negate(is_null)
 ### Prepare chopped looping for memory savings
 vec_DGM <- c("Gaussian", "ALD", "Mixed")
 vec_N_person <- c(20, 50, 100, 200, 500)
+<<<<<<< HEAD
 # list_rep <- split(51:100, rep(1:17, each = 3))
 list_rep <- split(70:81, rep(1:12, each = 1))
+=======
+list_rep <- split(1:81, rep(1:27, each = 3))
+>>>>>>> e90deac1a6bf28fb11481ad80f9bf2b31a119efd
 
 
 ### Construct a for loop for memory savings
@@ -233,7 +237,11 @@ for (i in seq_along(list_rep)){
       # Prepare parallel computation: Set the number of workers
       # parallelly::availableCores()
       # parallelly::availableWorkers()
+<<<<<<< HEAD
       plan(multisession, workers = 5)
+=======
+      plan(multisession, workers = 15)
+>>>>>>> e90deac1a6bf28fb11481ad80f9bf2b31a119efd
       
       # Subset the conditions
       df_sims_sub <- df_pre %>%
@@ -268,7 +276,10 @@ for (i in seq_along(list_rep)){
 toc()
 
 
+<<<<<<< HEAD
 
+=======
+>>>>>>> e90deac1a6bf28fb11481ad80f9bf2b31a119efd
 
 # ### Checking posterior samples invididually
 # df_example <- df_sims_sub[8, ]

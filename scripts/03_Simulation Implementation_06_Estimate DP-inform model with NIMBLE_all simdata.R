@@ -228,12 +228,17 @@ not_null <- negate(is_null)
 ### Prepare chopped looping for memory savings
 vec_DGM <- c("Gaussian", "ALD", "Mixed")
 vec_N_person <- c(20, 50, 100, 200, 500)
+<<<<<<< HEAD
 # list_rep <- split(51:100, rep(1:17, each = 3))
 list_rep <- split(87:90, rep(1:4, each = 1))
+=======
+list_rep <- split(66:100, rep(1:12, each = 3))
+>>>>>>> e90deac1a6bf28fb11481ad80f9bf2b31a119efd
 
 
 ### Construct a for loop for memory savings
 tic()
+<<<<<<< HEAD
 
 for (i in seq_along(list_rep)){
   for (j in seq_along(vec_DGM)){
@@ -292,12 +297,114 @@ df_example <- df_sims_sub[25, ]
 (list_est_beta <- check_site_specific_results(postsamp = postsamp,
                                               param = "beta",
                                               df_example = df_example))
+=======
+
+
+# df_sims_sub <- df_pre
+
+df_sims_sub <- df_pre %>%
+  filter(N_person %in% c(20, 50))
+
+for (i in seq_along(list_rep)){
+  for (j in seq_along(vec_DGM)){
+    for (k in seq_along(vec_N_person)){
+      
+      # Print progress
+      cat(paste0("DGM: ", vec_DGM[j]), 
+          paste0("N_person:", vec_N_person[k]), "rep: ", 
+          paste0(list_rep[[i]]), "\n")
+      
+      # Prepare parallel computation: Set the number of workers
+      # parallelly::availableCores()
+      # parallelly::availableWorkers()
+      plan(multisession, workers = 15)
+      
+      # Subset the conditions
+      df_sims_sub <- df_pre %>%
+        filter(DGM %in% vec_DGM[j]) %>%
+        filter(N_person %in% vec_N_person[k]) %>%
+        filter(rep %in% list_rep[[i]])
+      
+      # Let's roll! - Fit the model
+      tic()
+      
+      df_sims_sub %>% 
+        # slice(1:2) %>% # slicing for test
+        
+        ### Fit the models & tidy up results
+        future_map2(.x = .$y,
+                    .y = .$cond_name, 
+                    .f = ~safe_get_postsamp_DPinform_rasch(.x, .y),
+                    .options = furrr_options(seed = NULL,
+                                             chunk_size = NULL,
+                                             scheduling = 2),
+                    .progress = TRUE) %>%
+        map("error") %>%
+        map_lgl(not_null) %>%
+        {. ->> vec_error}
+      
+      toc()
+
+    }
+  }
+}
+
+>>>>>>> e90deac1a6bf28fb11481ad80f9bf2b31a119efd
 
 
 ### DPM model check
 DPdiffuse_check <- DPM_model_check(postsamp = postsamp)
 
+<<<<<<< HEAD
 DPdiffuse_check[1]
 DPdiffuse_check[2]
 DPdiffuse_check[3]
+=======
+## Checking posterior samples invididually
+df_example <- df_sims_sub[25, ]
+
+(list_est_theta <- check_site_specific_results(postsamp = postsamp,
+                                               param = "theta",
+                                               df_example = df_example))
+
+(list_est_beta <- check_site_specific_results(postsamp = postsamp,
+                                              param = "beta",
+                                              df_example = df_example))
+
+
+### DPM model check
+DPdiffuse_check <- DPM_model_check(postsamp = postsamp)
+
+
+### Check out errors and save the dataframe
+df_error <- df_sims_sub %>%
+  # slice(1:10) %>% # slicing for test
+  dplyr::select(sim_cond:beta_kind) %>%
+  mutate(error = vec_error)
+
+save_path <- file.path(data_dir2, "df_error_DPinform_N_20_50.rds")
+
+write_rds(df_error, save_path)
+
+
+### Checking posterior samples invididually
+# df_example <- df_sims_sub[10, ]
+# 
+# (list_est_theta <- check_site_specific_results(postsamp = postsamp,
+#                                                param = "theta",
+#                                                df_example = df_example))
+# 
+# (list_est_beta <- check_site_specific_results(postsamp = postsamp,
+#                                               param = "beta",
+#                                               df_example = df_example))
+# 
+# 
+# ### DPM model check
+# DPdiffuse_check <- DPM_model_check(postsamp = postsamp)
+# 
+# DPdiffuse_check[1]
+# DPdiffuse_check[2]
+# DPdiffuse_check[3]
+>>>>>>> e90deac1a6bf28fb11481ad80f9bf2b31a119efd
+
 
