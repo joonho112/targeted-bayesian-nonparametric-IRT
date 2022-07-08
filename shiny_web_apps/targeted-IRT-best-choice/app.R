@@ -264,7 +264,7 @@ ui <- fluidPage(
                   
                   tabPanel(title = "Scaled EDF", 
                            plotOutput(outputId = "best_choice_hist", 
-                                      width = "100%")),
+                                      width = "100%"))
                   
                   # tabPanel(title = "Bias in Percentile", 
                   #          plotOutput(outputId = "best_choice_percentile", 

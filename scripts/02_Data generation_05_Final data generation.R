@@ -28,13 +28,13 @@ gc(); rm(list=ls())
 
 ### Set working directory and data directory 
 work_dir <- file.path(path.expand("~"), 
-                      "Documents",
+                      # "Documents",
                       "targeted-bayesian-nonparametric-IRT") 
 
 data_dir <- file.path(work_dir, "datasets")
 
 data_dir2 <- file.path(path.expand("~"), 
-                       "Documents",
+                       # "Documents",
                        "Data-files", 
                        "targeted-bayesian-nonparametric-IRT-large-files")
 setwd(work_dir)
@@ -223,7 +223,7 @@ View(df_sim_theta_I)
 vec_DGM <- c("Gaussian", "ALD", "Mixed")
 vec_N_person <- c(20, 50, 100, 200, 500)
 vec_WLE_rel <- c(0.5, 0.6, 0.7, 0.8, 0.9)
-# list_rep <- split(1:81, rep(1:27, each = 3))
+vec_rep <- seq(100)
 
 
 ### Construct a for loop for memory savings
@@ -242,7 +242,7 @@ for (i in seq_along(vec_DGM)){
       # Prepare parallel computation: Set the number of workers
       # parallelly::availableCores()
       # parallelly::availableWorkers()
-      plan(multisession, workers = 10)
+      plan(multisession, workers = 8)
       
       # Subset the conditions
       df_sim_sub <- df_sim_theta_I %>%
@@ -326,7 +326,7 @@ for (i in seq_along(vec_DGM)){
       # Prepare parallel computation: Set the number of workers
       # parallelly::availableCores()
       # parallelly::availableWorkers()
-      plan(multisession, workers = 10)
+      plan(multisession, workers = 8)
       
       # Load the saved dataframe
       file_name <- paste0("df", 
@@ -452,7 +452,7 @@ for (i in seq_along(vec_DGM)){
       # Prepare parallel computation: Set the number of workers
       # parallelly::availableCores()
       # parallelly::availableWorkers()
-      plan(multisession, workers = 12)
+      plan(multisession, workers = 8)
       
       # Load the saved dataframe
       file_name <- paste0("df", 
@@ -498,7 +498,7 @@ for (i in seq_along(vec_DGM)){
       # Calculate reliabilities 
       tic()
       
-      plan(multisession, workers = 12)
+      plan(multisession, workers = 8)
       
       df_rel <- df_fit %>%
         # slice_head(n = 2000) %>%
