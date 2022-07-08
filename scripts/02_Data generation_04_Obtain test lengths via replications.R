@@ -29,17 +29,17 @@
 gc(); rm(list=ls())
 
 
-### Set working directory and data directory (Mac) 
-work_dir <- c("~/Documents/targeted-bayesian-nonparametric-IRT")
-data_dir <- file.path(work_dir, "datasets")
-data_dir2 <- c("~/Documents/Data-files/targeted-bayesian-nonparametric-IRT-large-files")
-setwd(work_dir)
+### Set working directory and data directory 
+work_dir <- file.path(path.expand("~"), 
+                      "Documents",
+                      "targeted-bayesian-nonparametric-IRT") 
 
-
-### Set working directory and data directory (Windows)
-work_dir <- c("~/targeted-bayesian-nonparametric-IRT")
 data_dir <- file.path(work_dir, "datasets")
-data_dir2 <- c("D:/Data-files/targeted-bayesian-nonparametric-IRT-large-files")
+
+data_dir2 <- file.path(path.expand("~"), 
+                       "Documents",
+                       "Data-files", 
+                       "targeted-bayesian-nonparametric-IRT-large-files")
 setwd(work_dir)
 
 
@@ -150,14 +150,14 @@ df_theta_conds2$true_theta[[30]] %>% density() %>% plot()
 
 df_theta_conds3 <- df_theta_conds2 %>%
   mutate(sim_cond = 1:n()) %>%
-  select(sim_cond, everything()) %>%
+  dplyr::select(sim_cond, everything()) %>%
   slice(rep(1:n(), each = 100)) %>%
   group_by(sim_cond) %>%
   mutate(rep = 1:n()) %>%
   ungroup()
 
 df_theta_conds3 %>%
-  select(sim_cond, DGM, N_person, true_theta, rep)
+  dplyr::select(sim_cond, DGM, N_person, true_theta, rep)
 
 df_theta_conds3$rep
 

@@ -1,0 +1,13 @@
+name: targeted-IRT-best-choice
+title: targeted-IRT-best-choice
+username:
+account: joonho
+server: shinyapps.io
+hostUrl: https://api.shinyapps.io/v1
+appId: 6609574
+bundleId: 6080336
+url: https://joonho.shinyapps.io/targeted-IRT-best-choice/
+when: 1657245768.78279
+lastSyncTime: 1657245768.78281
+asMultiple: FALSE
+asStatic: FALSE

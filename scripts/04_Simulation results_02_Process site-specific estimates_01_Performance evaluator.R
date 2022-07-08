@@ -28,13 +28,13 @@ gc(); rm(list=ls())
 
 ### Set working directory and data directory 
 work_dir <- file.path(path.expand("~"), 
-                      # "Documents",
+                      "Documents",
                       "targeted-bayesian-nonparametric-IRT") 
 
 data_dir <- file.path(work_dir, "datasets")
 
 data_dir2 <- file.path(path.expand("~"), 
-                       # "Documents", 
+                       "Documents",
                        "Data-files", 
                        "targeted-bayesian-nonparametric-IRT-large-files")
 setwd(work_dir)
@@ -63,7 +63,7 @@ list.files(file.path(work_dir, "functions"), full.names = TRUE) %>%
 ###'
 
 load_path <- file.path(data_dir2, 
-                       "df_site_est", 
+                       # "df_site_est", 
                        "df_site_est_collected.rds")
 
 df_site_est <- read_rds(load_path)
@@ -110,7 +110,7 @@ get_losses <- function(df_est) {
                           labels = c("PM", "CB", "GR"))
     ) %>%
     set_names(c("true", "sum_method", "estimate")) %>%
-    arrange(sum_method) %>%
+    # arrange(sum_method) %>%
     group_by(sum_method) %>%
     nest() %>%
     ungroup()
@@ -126,7 +126,7 @@ get_losses <- function(df_est) {
       IAEL = map_dbl(.x = data, .f = ~IAEL(.x$estimate, .x$true)),
       KS_dist = map_dbl(data, ~KS_dist(.x$estimate, .x$true))
     ) %>%
-    select(-data)
+    dplyr::select(-data)
   
   return(df_loss)
 }
@@ -134,13 +134,24 @@ get_losses <- function(df_est) {
 
 ###' Test the function
 ###' Calculate performance indicators: MSEL, MSELP, ISEL etc 
-df_loss_theta <- df_site_est %>%
-  slice_head(n = 10) %>%  # for testing
+
+df_temp <- df_site_est %>%
+  filter(
+    model %in% c("Gaussian"), 
+    DGM %in% c("Mixed"), 
+    N_person %in% c(100), 
+    WLE_rel %in% c(0.7), 
+    rep %in% c(99)
+  )
+
+df_temp$theta[[1]]
+
+df_loss_theta <- df_temp %>%
   mutate(
     loss_theta = map(.x = df_theta, 
                      .f = get_losses)
   ) %>%
-  select(-(theta:y), -(file_name:file_path), -(df_theta:df_hyper)) %>%
+  dplyr::select(-(theta:y), -(file_name:file_path), -(df_theta:df_hyper)) %>%
   unnest(loss_theta)
 
 df_loss_beta <- df_site_est %>%
@@ -334,6 +345,11 @@ View(df_loss_long)
 df_loss_long2 <- df_loss_long %>%
   mutate(
 
+    DGM = factor(
+      DGM, 
+      levels = c("Gaussian", "ALD", "Mixed")
+    ), 
+    
     N_person = factor(
       N_person, 
       levels = list_levels[["lev_N_person"]], 
@@ -367,3 +383,36 @@ object.size(df_loss_long2) %>% format("MB")
 
 write_rds(df_loss_long2, save_path)
 
+
+
+###'#######################################################################
+###'
+###' Generate save the summary data
+###'
+###'
+
+###' Summarize raw means and log means
+###' collapsing across iterations
+df_long <- df_loss_long2
+
+vec_7_factors <- c("param", "DGM", "N_person", "WLE_rel", 
+                   "model", "sum_method", "loss_est")
+
+df_sum <- df_long %>%
+  group_by(
+    across(.cols = all_of(vec_7_factors))
+  ) %>%
+  mutate(
+    log_value = if_else(value == 0, 0, log(value))
+  ) %>%
+  summarize(
+    mean_raw = mean(value), 
+    mean_log = mean(log_value), 
+    .groups = 'drop'
+  ) 
+
+
+### Save the summary data
+save_path <- file.path(data_dir2, "df_loss_estimates_SUMMARY_collected.rds")
+
+write_rds(df_sum, save_path)
