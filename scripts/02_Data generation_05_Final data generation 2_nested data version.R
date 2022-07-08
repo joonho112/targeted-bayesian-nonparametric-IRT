@@ -5,7 +5,7 @@
 ###' 
 ###' Category: Data generation 
 ###' 
-###' Task: Final data generation 
+###' Task: Final data generation 2 - nested data version
 ###'       
 ###' Data: Simulated data
 ###' 
@@ -120,7 +120,7 @@ df_simconds <- tibble_sim_conditions(vec_N_persons,
                                      vec_WLE_rel)
 
 df_simconds
-# View(df_simconds)
+View(df_simconds)
 
 
 
@@ -140,7 +140,7 @@ df_simconds_by_reps <- df_simconds %>%
 
 df_simconds_by_reps  
 
-# View(df_simconds_by_reps)
+View(df_simconds_by_reps)
 
 
 
@@ -159,7 +159,7 @@ df_sim_theta <- df_simconds_by_reps %>%
                            .f = ~gen_vec_theta(.x, .y)))
 
 ### Validation
-# View(df_sim_theta)
+View(df_sim_theta)
 
 test_row <- df_sim_theta %>%
   filter(
@@ -167,7 +167,7 @@ test_row <- df_sim_theta %>%
     N_person %in% c(500), 
     WLE_rel %in% c(0.5), 
     rep == 11
-) 
+  ) 
 
 test_row$true_theta[[1]] %>% 
   density() %>%
@@ -202,6 +202,56 @@ df_sim_theta_I <- df_sim_theta %>%
 df_sim_theta_I
 
 View(df_sim_theta_I)
+
+
+
+###'#######################################################################'
+###'
+###' Simulate item difficulty (\beta) vectors
+###'
+###' => 525,000 * 3 beta DGM = 1,575,000 rows
+###' 
+###'
+
+### Prepare parallel computation: Set the number of workers
+parallelly::availableCores()
+parallelly::availableWorkers()
+plan(multisession, workers = 20)
+
+
+### Let's roll!
+tic()
+
+df_theta_I_beta <- df_sim_theta_I %>%
+  # slice_head(n = 1000) %>% # slices for testing
+  mutate(
+    
+    ###' STEP 1. Simulate item difficulty (\beta) vectors
+    beta = future_map2(.x = I, 
+                       .y = true_theta, 
+                       .f = ~gen_vec_beta(.x, .y), 
+                       .options = furrr_options(seed = NULL, 
+                                                chunk_size = NULL, 
+                                                scheduling = 10), 
+                       .progress = TRUE)
+  ) %>%
+  unnest(beta)
+
+toc()
+
+
+### Save and load the resulting tibble
+file_path <- file.path(data_dir2, 
+                       "df_with_simulated_beta.rds")
+
+saveRDS(df_theta_I_beta, file_path)
+
+df_theta_I_beta <- read_rds(file = file_path)
+
+
+### Check the result
+df_theta_I_beta %>%
+  select(sim_cond, DGM, N_person, WLE_rel, true_theta, rep, I, beta_kind, vec_beta)
 
 
 
@@ -301,7 +351,119 @@ toc()
 ###' 
 ###' - Work only on the `beta_norm` for now to save time
 ###' 
-###' (4) Fit the Rasch model and calculate WLE reliability
+###'
+
+### Prepare chopped looping for memory savings
+vec_DGM <- c("Gaussian", "ALD", "Mixed")
+vec_N_person <- c(20, 50, 100, 200, 500)
+vec_WLE_rel <- c(0.5, 0.6, 0.7, 0.8, 0.9)
+# list_rep <- split(1:81, rep(1:27, each = 3))
+
+
+### Construct a for loop for memory savings
+tic()
+
+for (i in seq_along(vec_DGM)){
+  for (j in seq_along(vec_N_person)){
+    for (k in seq_along(vec_WLE_rel)){
+      
+      # Print progress
+      cat(paste0("DGM: ", vec_DGM[i]), 
+          paste0("|| N_person:", vec_N_person[j]), 
+          paste0("|| WLE_rel: ", vec_WLE_rel[k]),
+          "\n")
+      
+      # Prepare parallel computation: Set the number of workers
+      # parallelly::availableCores()
+      # parallelly::availableWorkers()
+      plan(multisession, workers = 8)
+      
+      # Load the saved dataframe
+      file_name <- paste0("df", 
+                          "_DGM-", vec_DGM[i], 
+                          "_N-", vec_N_person[j], 
+                          "_WLE_rel-", vec_WLE_rel[k]*100, ".rds")
+      
+      load_path <- file.path(data_dir2, 
+                             "temp_folder", 
+                             file_name)
+      
+      df_temp <- read_rds(load_path) %>%
+        filter(beta_kind %in% c("beta_norm"))  # Extract only "beta_norm"
+      
+      # Prepare subset data for `pmap()`
+      df_sub <- df_temp %>%
+        dplyr::select(I, true_theta, vec_beta) %>%
+        rename(
+          N_item = I, 
+          theta = true_theta, 
+          beta = vec_beta) %>%
+        mutate(N_person = map_dbl(.x = theta, .f = length)) %>%
+        relocate(N_person, .before = N_item)
+      
+      # Simulate item response data (logit, prob, y)
+      tic()
+      
+      list_sim_data <- future_pmap(
+        .l = df_sub, 
+        .f = gen_rasch_logit_prob_y,
+        .options = furrr_options(seed = NULL, 
+                                 chunk_size = 100, 
+                                 scheduling = 5), 
+        .progress = TRUE
+      )
+      
+      toc()
+      
+      # Expand the item response lists
+      df_y <- df_sub %>%
+        mutate(
+          logit = map(.x = list_sim_data, .f = 1), 
+          prob = map(.x = list_sim_data, .f = 2), 
+          y = map(.x = list_sim_data, .f = 3)
+        )
+      
+      # Estimate test information
+      df_y <- df_y %>%
+        mutate(
+          test_info_est = map_dbl(.x = logit, 
+                                  .f = get_test_info_est)
+        )
+      
+      # Attach to the original data
+      df_temp2 <- df_temp %>% 
+        dplyr::select(-N_person, -I)
+      
+      df_y_final <- bind_cols(df_temp2, df_y)
+      
+      
+      # Save to the disk
+      file_name <- paste0("df", 
+                          "_DGM-", vec_DGM[i], 
+                          "_N-", vec_N_person[j], 
+                          "_WLE_rel-", vec_WLE_rel[k]*100, 
+                          "_item response data.rds")
+      
+      save_path <- file.path(data_dir2, 
+                             "temp_folder", 
+                             file_name)
+      
+      write_rds(df_y_final, save_path)
+    }
+  }
+}
+
+toc()
+
+
+
+###'#######################################################################'
+###' 
+###' Simulate item difficulty data 
+###' 
+###' via Monte Carlo approximation
+###' 
+###' (3) Fit the Rasch model and calculate WLE reliability
 ###'
 ###' - Loop over `3*5*5 = 75` files for memory savings
 ###' 
@@ -309,7 +471,7 @@ toc()
 ###' 
 ###' - Sort out only the cases with `minimum WLE reliablities`
 ###' 
-###' 
+###'
 
 ### Prepare chopped looping for memory savings
 vec_DGM <- c("Gaussian", "ALD", "Mixed")
@@ -340,78 +502,28 @@ for (i in seq_along(vec_DGM)){
       # Prepare parallel computation: Set the number of workers
       # parallelly::availableCores()
       # parallelly::availableWorkers()
-      plan(multisession, workers = 20)
+      plan(multisession, workers = 8)
       
       # Load the saved dataframe
       file_name <- paste0("df", 
                           "_DGM-", vec_DGM[i], 
                           "_N-", vec_N_person[j], 
-                          "_WLE_rel-", vec_WLE_rel[k]*100, ".rds")
+                          "_WLE_rel-", vec_WLE_rel[k]*100, 
+                          "_item response data.rds")
       
       load_path <- file.path(data_dir2, 
                              "temp_folder", 
                              file_name)
       
       df_temp <- read_rds(load_path) %>%
-        filter(beta_kind %in% c("beta_norm"))  # Extract only "beta_norm"
-      
-      # Prepare subset data for `pmap()`
-      df_sub <- df_temp %>%
-        dplyr::select(I, true_theta, vec_beta) %>%
-        rename(
-          N_item = I, 
-          theta = true_theta, 
-          beta = vec_beta) %>%
-        mutate(N_person = map_dbl(.x = theta, .f = length)) %>%
-        relocate(N_person, .before = N_item)
-      
-      # Simulate item response data (logit, prob, y)
-      tic()
-      
-      plan(multisession, workers = 20)
-      
-      list_sim_data <- future_pmap(
-        .l = df_sub, 
-        .f = gen_rasch_logit_prob_y,
-        .options = furrr_options(seed = NULL, 
-                                 chunk_size = 100, 
-                                 scheduling = 5), 
-        .progress = TRUE
-      )
-      
-      toc()
-      
-      # Expand the item response lists
-      df_y <- df_sub %>%
-        mutate(
-          logit = map(.x = list_sim_data, .f = 1), 
-          prob = map(.x = list_sim_data, .f = 2), 
-          y = map(.x = list_sim_data, .f = 3)
-        )
-      
-      # Estimate test information
-      df_y <- df_y %>%
-        mutate(
-          test_info_est = map_dbl(.x = logit, 
-                                  .f = get_test_info_est)
-      )
-      
-      rm(list_sim_data)
-      
-      # Attach to the original data
-      df_temp2 <- df_temp %>% 
-        dplyr::select(-N_person, -I)
-      
-      df_y_final <- bind_cols(df_temp2, df_y) %>%
         filter(N_item >= 5)  ## Remove cases with N_item < 5
       
-      
       # Fit the Rasch model
-      plan(multisession, workers = 20)
-      
       tic()
       
-      df_fit <- df_y_final %>%
+      plan(multisession, workers = 12)
+      
+      df_fit <- df_temp %>%
         # slice_head(n = 2000) %>%
         mutate(
           mod_fit = future_map(.x = y, 
@@ -424,8 +536,6 @@ for (i in seq_along(vec_DGM)){
       
       toc()
       
-      rm(df_y_final)
-      
       # Split result and error
       df_fit <- df_fit %>%
         mutate(
@@ -435,11 +545,10 @@ for (i in seq_along(vec_DGM)){
         ) %>%
         dplyr::select(-mod_fit)
       
-      
       # Calculate reliabilities 
-      plan(multisession, workers = 20)
-      
       tic()
+      
+      plan(multisession, workers = 8)
       
       df_rel <- df_fit %>%
         # slice_head(n = 2000) %>%
@@ -460,8 +569,6 @@ for (i in seq_along(vec_DGM)){
       
       toc()
       
-      plan(multisession, workers = 5) # release memory
-      
       # Calculate biases
       df_rel <- df_rel %>%
         mutate(
@@ -471,7 +578,7 @@ for (i in seq_along(vec_DGM)){
         )
       
       #' Filter out results based on WLE reliability biases
-      #' Only the minimum WLE bias cases
+      #' reduce rows
       df_rel_min <- df_rel %>%
         # drop errors
         filter(error_lgl == FALSE) %>% 
@@ -481,7 +588,8 @@ for (i in seq_along(vec_DGM)){
         ) %>%
         ungroup() %>%
         filter(min_WLE_bias == abs(WLE_rel_bias))
-    
+      
+      
       # Save to the disk
       file_name <- paste0("df", 
                           "_DGM-", vec_DGM[i], 
@@ -499,95 +607,5 @@ for (i in seq_along(vec_DGM)){
 }
 
 toc()
-
-
-
-###'#######################################################################
-###'
-###' Collect the final simulated data
-###'
-###'
-
-### Load all datasets
-load_path <- file.path(data_dir2, 
-                       "temp_folder")
-
-tic()
-
-df_temp <- list.files(load_path) %>%
-  tibble() %>%
-  set_names(c("filename")) %>%
-  mutate(
-    file_path = file.path(data_dir2, "temp_folder", filename), 
-    tag = str_detect(filename, "final data with min_WLE_rel")
-  ) %>%
-  filter(tag == TRUE) %>%
-  mutate(
-    data = map(.x = file_path, .f = read_rds)
-  )
-  
-toc()
-
-df_temp
-
-
-### Bind rows
-df_sim <- df_temp$data %>%
-  bind_rows()
-
-names(df_sim)
-
-object.size(df_sim) %>% format("GB")  # 4 GB
-
-
-### Delete unnecessary columns
-df_sim$error[[1]]
-df_sim$error_lgl[[1]]
-df_sim$result[[1]]
-
-df_sim2 <- df_sim %>%
-  dplyr::select(-error, -error_lgl, -result)
-
-object.size(df_sim2) %>% format("MB")  # 1 GB
-
-
-### Arrange the pre-simulated dataset
-names(df_sim2)
-
-df_sim3 <- df_sim2 %>%
-  mutate(
-    cond_name = paste(
-      sprintf("%02d", sim_cond), 
-      DGM, 
-      "N", sprintf("%03d", N_person), 
-      "WLErel", sprintf("%02d", WLE_rel*100), 
-      "rep", sprintf("%03d", rep), 
-      sep = "_"
-    ) 
-  ) %>%
-  dplyr::select(
-    sim_cond, DGM, N_person, WLE_rel, WLE_rel_est, N_item, rep, cond_name, 
-    theta, beta, logit, prob, y, 
-    true_var, err_var, obs_var, sep_coef, strata, 
-    test_info, test_info_est, test_info_bias,
-    EAP_rel, EAP_rel_est, EAP_rel_bias, 
-    WLE_rel_bias 
-  ) %>%
-  arrange(sim_cond, rep)
-
-names(df_sim3)
-
-df_sim3
-
-
-### Save the resulting pre-simulated data
-object.size(df_sim3) %>% format("MB")
-
-save_path <- file.path(data_dir2, "df_pre_simulated_UPDATED.rds")
-
-write_rds(df_sim3, save_path)
-
-
-
 
 
